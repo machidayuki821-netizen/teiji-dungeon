@@ -16,14 +16,17 @@ const DATA = {
   // 画面表示の設定
   view: {
     cols: 9,         // 画面の横に表示するマス数（奇数にすると主人公が中央に来る）
+    mapAlpha: 0.3,   // 常時表示する地図の濃さ（0〜1。0.25で透明度75%）
   },
 
   // 操作の設定
   control: {
-    deadZone: 16,        // スティックが反応し始める距離（px）
+    deadZone: 22,        // スティックが反応し始める距離（px）
     stickRadius: 60,     // スティックの土台の半径（px）
-    repeatDelay: 280,    // 倒し続けたとき、連続移動が始まるまでの時間（ミリ秒）
-    repeatInterval: 110, // 連続移動の間隔（ミリ秒）
+    hysteresis: 10,      // 方向が切り替わりにくくする角度（度）。指のブレで方向が変わるのを防ぐ
+    changeDelay: 120,    // 倒したまま方向を変えたとき、1歩目を出すまでの待ち時間（ミリ秒）
+    repeatDelay: 500,    // 倒し続けたとき、連続移動が始まるまでの時間（ミリ秒）
+    repeatInterval: 170, // 連続移動の間隔（ミリ秒）
   },
 
   // 迷宮の定義
@@ -44,6 +47,7 @@ const DATA = {
     suit: '#26304a',
     face: '#f1d2b6',
     target: 'rgba(255,255,255,0.6)',
+    targetTurn: 'rgba(255,215,90,0.85)',
     miniRoom: '#b9a58c',
     miniCorridor: '#8c7b68',
   },
