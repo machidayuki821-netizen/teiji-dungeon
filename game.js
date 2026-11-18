@@ -25,7 +25,8 @@ const state = {
   stairs: { x: 0, y: 0 },
   player: { x: 0, y: 0, rx: 0, ry: 0, dir: 2 },
   logs: [],
-  showMini: false,
+  showMini: false,  // 地図の常時表示
+  turnMode: false,  // 向き変えモード（スティックで向きだけ変える）
   locked: false,    // オーバーレイ表示中など、操作を受け付けない状態
 };
 
@@ -219,16 +220,34 @@ function stepPlayer(d) {
   state.turn++;
   updateVisibility();
 
+  // 連続移動を止める場所
   let keepGoing = true;
+  const nowRoom = roomAt(p.x, p.y);
   if (onStairs()) {
     addLog('階段がある。');
     keepGoing = false;
   }
-  // 通路から部屋に入ったら、連続移動を止める
-  if (prevRoom === -1 && roomAt(p.x, p.y) !== -1) keepGoing = false;
+  if (prevRoom === -1 && nowRoom !== -1) keepGoing = false; // 通路から部屋に入った
+  if (prevRoom !== -1 && nowRoom === -1) keepGoing = false; // 部屋から通路に出た
+  if (nowRoom === -1 && isJunction(p.x, p.y)) keepGoing = false; // 通路の分かれ道
 
   updateUI();
   return keepGoing;
+}
+
+// 通路の分かれ道か（上下左右のうち3方向以上に進める）
+function isJunction(x, y) {
+  let n = 0;
+  for (const d of [0, 2, 4, 6]) {
+    if (walkable(x + DIRS[d][0], y + DIRS[d][1])) n++;
+  }
+  return n >= 3;
+}
+
+// その場で向きだけ変える（ターンは進まない）
+function turnPlayer(d) {
+  if (state.locked) return;
+  state.player.dir = d;
 }
 
 function onStairs() {
@@ -361,11 +380,14 @@ function render() {
     }
   }
 
-  // スティックで狙っているマスを枠で表示
+  // スティックで狙っているマスを枠で表示（向き変えモードは黄色）
   if (stick.active && stick.dir !== null) {
     const [dx, dy] = DIRS[stick.dir];
-    const ok = canMove(p.x, p.y, stick.dir);
-    ctx.strokeStyle = ok ? C.target : 'rgba(255,80,80,0.6)';
+    if (state.turnMode) {
+      ctx.strokeStyle = C.targetTurn;
+    } else {
+      ctx.strokeStyle = canMove(p.x, p.y, stick.dir) ? C.target : 'rgba(255,80,80,0.6)';
+    }
     ctx.lineWidth = 2;
     ctx.strokeRect((p.x + dx) * ts - camX + 2, (p.y + dy) * ts - camY + 2, ts - 4, ts - 4);
   }
@@ -409,13 +431,14 @@ function drawPlayer(sx, sy, ts, dir) {
   ctx.fill();
 }
 
+// 地図の常時表示：歩いたことのある場所を、画面全体にうっすら重ねる
 function drawMiniMap(w, h) {
   const C = DATA.colors;
   const W = DATA.map.width, H = DATA.map.height;
-  const s = Math.min((w - 24) / W, (h - 24) / H);
+  const s = Math.min((w - 16) / W, (h - 16) / H);
   const ox = (w - W * s) / 2, oy = (h - H * s) / 2;
-  ctx.fillStyle = 'rgba(0,0,0,0.72)';
-  ctx.fillRect(0, 0, w, h);
+  ctx.save();
+  ctx.globalAlpha = DATA.view.mapAlpha;
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       if (!state.explored[idx(x, y)]) continue;
@@ -425,6 +448,8 @@ function drawMiniMap(w, h) {
       ctx.fillRect(ox + x * s, oy + y * s, s, s);
     }
   }
+  // 階段と主人公は見失わないよう、濃いめに表示する
+  ctx.globalAlpha = Math.min(1, DATA.view.mapAlpha + 0.5);
   if (state.explored[idx(state.stairs.x, state.stairs.y)]) {
     ctx.fillStyle = C.stairs;
     ctx.fillRect(ox + state.stairs.x * s, oy + state.stairs.y * s, s, s);
@@ -433,6 +458,7 @@ function drawMiniMap(w, h) {
   ctx.beginPath();
   ctx.arc(ox + (state.player.x + 0.5) * s, oy + (state.player.y + 0.5) * s, Math.max(2.5, s * 0.7), 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 }
 
 // 毎フレームの処理（主人公の表示位置をなめらかに追従させる）
@@ -459,25 +485,52 @@ const zone = $('stick-zone');
 const base = $('stick-base');
 const knob = $('stick-knob');
 
+// 角度と方向の中心とのずれ（度）
+function angleDiff(a, b) {
+  let diff = Math.abs(a - b) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+
 // 角度を8方向に吸着させる（上下左右は35度、斜めは55度の幅）
-function snapDir(angleDeg) {
+// すでに倒している方向があれば、その方向を少し広めに保つ（指のブレ対策）
+function snapDir(angleDeg, current) {
+  if (current !== null) {
+    const half = (current % 2 === 0 ? 17.5 : 27.5) + DATA.control.hysteresis;
+    if (angleDiff(angleDeg, current * 45) <= half) return current;
+  }
   for (let i = 0; i < 8; i++) {
-    const center = i * 45;
     const half = i % 2 === 0 ? 17.5 : 27.5;
-    let diff = Math.abs(angleDeg - center) % 360;
-    if (diff > 180) diff = 360 - diff;
-    if (diff <= half) return i;
+    if (angleDiff(angleDeg, i * 45) <= half) return i;
   }
   return 0;
 }
 
 function setStickDir(d) {
   if (d === stick.dir) return;
+  const prev = stick.dir;
   clearTimeout(stick.timer);
   stick.dir = d;
   stick.halted = false;
   if (d === null) return;
-  if (!stepPlayer(d)) stick.halted = true;
+
+  // 向き変えモード：向きだけ変えて、移動はしない
+  if (state.turnMode) {
+    turnPlayer(d);
+    return;
+  }
+
+  if (prev === null) {
+    // 中央から倒した瞬間は、すぐに1歩
+    firstStep();
+  } else {
+    // 倒したまま方向を変えたときは、少し待ってから1歩（通り道の方向に誤って進まないように）
+    stick.timer = setTimeout(firstStep, DATA.control.changeDelay);
+  }
+}
+
+function firstStep() {
+  if (!stick.active || stick.dir === null) return;
+  if (!stepPlayer(stick.dir)) stick.halted = true;
   stick.timer = setTimeout(repeatStep, DATA.control.repeatDelay);
 }
 
@@ -500,7 +553,7 @@ function updateStick(e) {
   }
   let angle = Math.atan2(dy, dx) * 180 / Math.PI;
   if (angle < 0) angle += 360;
-  const d = snapDir(angle);
+  const d = snapDir(angle, stick.dir);
   const [sx, sy] = DIRS[d];
   const len = Math.hypot(sx, sy);
   const r = Math.min(dist, R);
@@ -514,6 +567,8 @@ function releaseStick() {
   clearTimeout(stick.timer);
   stick.dir = null;
   stick.halted = false;
+  // 向き変えモードは、指を離したら終わる
+  if (state.turnMode) setTurnMode(false);
   base.classList.remove('active');
   base.style.left = '';
   base.style.top = '';
@@ -547,16 +602,39 @@ zone.addEventListener('pointercancel', (e) => { if (e.pointerId === stick.id) re
 function onPress(id, fn) {
   $(id).addEventListener('pointerdown', (e) => { e.preventDefault(); fn(); });
 }
+// 設定の保存・読み込み（保存できない環境でも動作には支障なし）
+function saveSetting(key, value) {
+  try { localStorage.setItem(key, value ? '1' : '0'); } catch (err) { /* 何もしない */ }
+}
+function loadSetting(key) {
+  try { return localStorage.getItem(key) === '1'; } catch (err) { return false; }
+}
+
+// 向き変えモードの切り替え
+function setTurnMode(on) {
+  state.turnMode = on;
+  $('btn-turn').classList.toggle('on', on);
+}
+
+// 地図の常時表示の切り替え
+function setShowMap(on) {
+  state.showMini = on;
+  $('btn-mini').classList.toggle('on', on);
+  saveSetting('showMap', on);
+}
+
 onPress('btn-action', doAction);
-onPress('btn-mini', () => { state.showMini = !state.showMini; });
+onPress('btn-turn', () => setTurnMode(!state.turnMode));
+onPress('btn-mini', () => setShowMap(!state.showMini));
 onPress('btn-swap', () => {
   const swapped = $('app').classList.toggle('swapped');
-  try { localStorage.setItem('swapControls', swapped ? '1' : '0'); } catch (err) { /* 保存できなくても動作に支障なし */ }
+  saveSetting('swapControls', swapped);
 });
 
 // ============================================================
 // 操作：キーボード（PCでの確認用）
 // 矢印キー / テンキー / Q W E A D Z X C で8方向、スペースで決定、Mで地図
+// Shiftを押しながら方向キーで、向きだけ変える
 // ============================================================
 const KEY_DIRS = {
   ArrowRight: 0, ArrowDown: 2, ArrowLeft: 4, ArrowUp: 6,
@@ -571,20 +649,20 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k in KEY_DIRS) {
     e.preventDefault();
-    stepPlayer(KEY_DIRS[k]);
+    if (e.shiftKey) turnPlayer(KEY_DIRS[k]);
+    else stepPlayer(KEY_DIRS[k]);
   } else if (k === ' ' || k === 's' || k === '5') {
     e.preventDefault();
     doAction();
   } else if (k === 'm') {
-    state.showMini = !state.showMini;
+    setShowMap(!state.showMini);
   }
 });
 
 // ============================================================
 // 起動
 // ============================================================
-try {
-  if (localStorage.getItem('swapControls') === '1') $('app').classList.add('swapped');
-} catch (err) { /* 保存領域が使えない環境でも起動できるようにする */ }
+if (loadSetting('swapControls')) $('app').classList.add('swapped');
+setShowMap(loadSetting('showMap'));
 startDungeon();
 requestAnimationFrame(frame);
