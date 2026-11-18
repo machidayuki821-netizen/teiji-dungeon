@@ -1,5 +1,5 @@
 // ============================================================
-// game.js ― ゲームの仕組み（段階①：歩く）
+// game.js ― ゲームの仕組み（段階②：戦う）
 // ============================================================
 'use strict';
 
@@ -23,12 +23,15 @@ const state = {
   explored: null,   // 一度でも見たマス
   visible: null,    // 今見えているマス
   stairs: { x: 0, y: 0 },
-  player: { x: 0, y: 0, rx: 0, ry: 0, dir: 2 },
+  player: null,     // startDungeon で作る
+  enemies: [],      // この階にいる敵
+  popups: [],       // ダメージ数字などの表示
   logs: [],
   showMini: false,  // 地図の常時表示
   turnMode: false,  // 向き変えモード（スティックで向きだけ変える）
   locked: false,    // オーバーレイ表示中など、操作を受け付けない状態
 };
+let nextEnemyId = 1;
 
 // ---- 便利関数 ----
 const $ = (id) => document.getElementById(id);
@@ -45,6 +48,16 @@ function inMap(x, y) {
   return x >= 0 && y >= 0 && x < DATA.map.width && y < DATA.map.height;
 }
 function walkable(x, y) { return inMap(x, y) && state.map[y][x] !== T_WALL; }
+function dist(ax, ay, bx, by) { return Math.max(Math.abs(ax - bx), Math.abs(ay - by)); }
+function dirTo(ax, ay, bx, by) {
+  const dx = Math.sign(bx - ax), dy = Math.sign(by - ay);
+  return DIRS.findIndex(([x, y]) => x === dx && y === dy);
+}
+function enemyAt(x, y) { return state.enemies.find((e) => e.x === x && e.y === y) || null; }
+function isOccupied(x, y) {
+  const p = state.player;
+  return (p.x === x && p.y === y) || !!enemyAt(x, y);
+}
 
 // ============================================================
 // マップ生成
@@ -155,9 +168,18 @@ function generateFloor() {
   state.stairs = stairs;
   state.explored = new Uint8Array(W * H);
   state.visible = new Uint8Array(W * H);
+  state.enemies = [];
+  state.popups = [];
   const p = state.player;
   p.x = p.rx = start.x;
   p.y = p.ry = start.y;
+
+  // 敵を配置（主人公のいる部屋には置かない）
+  const dungeon = DATA.dungeons[state.dungeonId];
+  const count = rand(dungeon.enemyStart[0], dungeon.enemyStart[1]);
+  const startRoomIndex = rooms.indexOf(startRoom);
+  for (let i = 0; i < count; i++) spawnEnemy(startRoomIndex);
+
   updateVisibility();
 }
 
@@ -169,6 +191,44 @@ function roomAt(x, y) {
     if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return i;
   }
   return -1;
+}
+
+// ============================================================
+// 敵の出現
+// ============================================================
+function pickEnemyType() {
+  const table = DATA.dungeons[state.dungeonId].spawnTable
+    .filter((s) => state.floor >= s.from && state.floor <= s.to);
+  const total = table.reduce((sum, s) => sum + s.weight, 0);
+  let r = Math.random() * total;
+  for (const s of table) {
+    r -= s.weight;
+    if (r < 0) return s.id;
+  }
+  return table[0].id;
+}
+
+// 敵を1体出す。avoidRoom の部屋と、主人公から見えている場所には出さない
+function spawnEnemy(avoidRoom) {
+  const rooms = state.rooms
+    .map((r, i) => ({ r, i }))
+    .filter(({ r, i }) => !r.dummy && i !== avoidRoom);
+  for (let tries = 0; tries < 30; tries++) {
+    const { r } = rooms[rand(0, rooms.length - 1)];
+    const x = rand(r.x, r.x + r.w - 1);
+    const y = rand(r.y, r.y + r.h - 1);
+    if (isOccupied(x, y)) continue;
+    if (x === state.stairs.x && y === state.stairs.y) continue;
+    if (state.visible && state.visible[idx(x, y)]) continue;
+    const type = pickEnemyType();
+    const def = DATA.enemies[type];
+    state.enemies.push({
+      id: nextEnemyId++, type, x, y, rx: x, ry: y,
+      hp: def.hp, maxHp: def.hp,
+      alert: 0, tx: null, ty: null, flash: 0,
+    });
+    return;
+  }
 }
 
 // ============================================================
@@ -194,31 +254,52 @@ function updateVisibility() {
   }
 }
 
+function visibleEnemyIds() {
+  return new Set(state.enemies.filter((e) => state.visible[idx(e.x, e.y)]).map((e) => e.id));
+}
+
 // ============================================================
-// 移動
+// 移動・攻撃（主人公）
 // ============================================================
+// 地形だけを見て、その方向に1マス進めるか（斜めは角の壁をすり抜けられない）
 function canMove(x, y, d) {
   const [dx, dy] = DIRS[d];
   if (!walkable(x + dx, y + dy)) return false;
-  // 斜め移動は、角の壁をすり抜けられない
   if (dx !== 0 && dy !== 0) {
     if (!walkable(x + dx, y) || !walkable(x, y + dy)) return false;
   }
   return true;
 }
 
-// 1歩動く。連続移動を続けてよければ true を返す
+// その方向に攻撃できる敵がいれば返す
+function enemyInDir(d) {
+  const p = state.player;
+  if (!canMove(p.x, p.y, d)) return null;
+  return enemyAt(p.x + DIRS[d][0], p.y + DIRS[d][1]);
+}
+
+// 1歩動く（敵がいれば攻撃）。連続移動を続けてよければ true を返す
 function stepPlayer(d) {
   if (state.locked) return false;
   const p = state.player;
   p.dir = d;
+
+  const target = enemyInDir(d);
+  if (target) {
+    playerAttack(target);
+    endTurn();
+    return false; // 攻撃したら連続移動は止める
+  }
   if (!canMove(p.x, p.y, d)) return false; // 壁：向きだけ変わる（ターンは進まない）
 
+  const seenBefore = visibleEnemyIds();
   const prevRoom = roomAt(p.x, p.y);
   p.x += DIRS[d][0];
   p.y += DIRS[d][1];
-  state.turn++;
   updateVisibility();
+  const hpBefore = p.hp;
+  endTurn();
+  if (state.locked) return false;
 
   // 連続移動を止める場所
   let keepGoing = true;
@@ -230,8 +311,12 @@ function stepPlayer(d) {
   if (prevRoom === -1 && nowRoom !== -1) keepGoing = false; // 通路から部屋に入った
   if (prevRoom !== -1 && nowRoom === -1) keepGoing = false; // 部屋から通路に出た
   if (nowRoom === -1 && isJunction(p.x, p.y)) keepGoing = false; // 通路の分かれ道
+  // 新しい敵が見えた、敵が隣にいる、攻撃を受けた
+  const seenNow = visibleEnemyIds();
+  for (const id of seenNow) if (!seenBefore.has(id)) keepGoing = false;
+  if (state.enemies.some((e) => dist(e.x, e.y, p.x, p.y) <= 1)) keepGoing = false;
+  if (p.hp < hpBefore) keepGoing = false;
 
-  updateUI();
   return keepGoing;
 }
 
@@ -248,6 +333,7 @@ function isJunction(x, y) {
 function turnPlayer(d) {
   if (state.locked) return;
   state.player.dir = d;
+  updateUI();
 }
 
 function onStairs() {
@@ -255,24 +341,219 @@ function onStairs() {
   return p.x === state.stairs.x && p.y === state.stairs.y;
 }
 
-// 決定ボタン：階段の上なら降りる、それ以外は足踏み
-function doAction() {
-  if (state.locked) return;
-  if (onStairs()) {
-    descend();
+// ダメージ計算：攻撃力 − 防御力 に、±12%のゆらぎ（最低1）
+function calcDamage(atk, def) {
+  const base = Math.max(1, atk - def);
+  return Math.max(1, Math.round(base * (0.88 + Math.random() * 0.24)));
+}
+
+function playerAttack(e) {
+  const p = state.player;
+  const def = DATA.enemies[e.type];
+  p.lunge = 1;
+  if (Math.random() > DATA.player.hitRate) {
+    addLog(`${def.name}への攻撃は外れた。`);
+    addPopup(e.x, e.y, 'ミス', DATA.colors.dmgToEnemy);
+    return;
+  }
+  const dmg = calcDamage(p.atk, def.def);
+  e.hp -= dmg;
+  e.flash = 1;
+  e.alert = DATA.ai.alertTurns;
+  addPopup(e.x, e.y, String(dmg), DATA.colors.dmgToEnemy);
+  if (e.hp <= 0) {
+    state.enemies = state.enemies.filter((x) => x !== e);
+    addLog(`${def.name}をたおした。経験値${def.exp}`);
+    gainExp(def.exp);
   } else {
-    state.turn++;
-    addLog('足踏みした。');
-    updateUI();
+    addLog(`${def.name}に${dmg}のダメージ。`);
   }
 }
 
+function gainExp(amount) {
+  const p = state.player;
+  p.exp += amount;
+  const table = DATA.player.expTable;
+  while (p.level - 1 < table.length && p.exp >= table[p.level - 1]) {
+    p.level++;
+    p.maxHp += DATA.player.levelUp.hp;
+    p.hp += DATA.player.levelUp.hp;
+    p.atk += DATA.player.levelUp.atk;
+    addLog(`レベル${p.level}に上がった！`);
+    addPopup(p.x, p.y, 'LvUP', DATA.colors.heal);
+  }
+}
+
+// 決定ボタン：向いている方向に敵がいれば攻撃、階段の上なら降りる、それ以外は足踏み
+function doAction() {
+  if (state.locked) return;
+  const target = enemyInDir(state.player.dir);
+  if (target) {
+    playerAttack(target);
+    endTurn();
+  } else if (onStairs()) {
+    descend();
+  } else {
+    addLog('足踏みした。');
+    endTurn();
+  }
+}
+
+// ============================================================
+// ターンの終わり：自然回復 → 敵の行動 → 敵の出現 → 力尽きたか確認
+// ============================================================
+function endTurn() {
+  const p = state.player;
+  state.turn++;
+
+  // 自然回復
+  if (p.hp < p.maxHp) {
+    p.regen += p.maxHp * DATA.player.regenRate;
+    if (p.regen >= 1) {
+      const heal = Math.floor(p.regen);
+      p.regen -= heal;
+      p.hp = Math.min(p.maxHp, p.hp + heal);
+    }
+  } else {
+    p.regen = 0;
+  }
+
+  // 敵の行動
+  for (const e of [...state.enemies]) {
+    if (p.hp <= 0) break;
+    enemyAct(e);
+  }
+
+  // 敵の出現
+  const dungeon = DATA.dungeons[state.dungeonId];
+  if (state.turn % dungeon.spawnEvery === 0 && state.enemies.length < dungeon.enemyMax) {
+    spawnEnemy(roomAt(p.x, p.y));
+  }
+
+  updateVisibility();
+  updateUI();
+
+  if (p.hp <= 0) onDeath();
+}
+
+// ============================================================
+// 敵の行動
+// ============================================================
+function enemyCanSeePlayer(e) {
+  const p = state.player;
+  const er = roomAt(e.x, e.y);
+  if (er !== -1 && er === roomAt(p.x, p.y)) return true;
+  return dist(e.x, e.y, p.x, p.y) <= DATA.ai.sightRange;
+}
+
+function enemyAct(e) {
+  const def = DATA.enemies[e.type];
+  const p = state.player;
+
+  // 主人公に気づいているか
+  if (enemyCanSeePlayer(e)) {
+    e.alert = DATA.ai.alertTurns;
+    e.tx = p.x; e.ty = p.y;
+  } else if (e.alert > 0) {
+    e.alert--;
+  }
+
+  // ふらふら動く敵は、半分の確率でランダムに動く
+  if (def.move === 'erratic' && Math.random() < 0.5) {
+    const dirs = shuffle([0, 1, 2, 3, 4, 5, 6, 7]);
+    for (const d of dirs) {
+      const nx = e.x + DIRS[d][0], ny = e.y + DIRS[d][1];
+      if (nx === p.x && ny === p.y && canMove(e.x, e.y, d)) { enemyAttack(e); return; }
+      if (canMove(e.x, e.y, d) && !isOccupied(nx, ny)) { e.x = nx; e.y = ny; return; }
+    }
+    return;
+  }
+
+  // 隣にいれば攻撃
+  if (e.alert > 0 && dist(e.x, e.y, p.x, p.y) === 1) {
+    const d = dirTo(e.x, e.y, p.x, p.y);
+    if (canMove(e.x, e.y, d)) { enemyAttack(e); return; }
+  }
+
+  // 目的地を決める（気づいていれば主人公、そうでなければ適当な部屋）
+  if (e.alert <= 0) {
+    if (e.tx === null || (e.x === e.tx && e.y === e.ty) || Math.random() < 0.02) {
+      const rooms = state.rooms.filter((r) => !r.dummy);
+      const r = rooms[rand(0, rooms.length - 1)];
+      e.tx = rand(r.x, r.x + r.w - 1);
+      e.ty = rand(r.y, r.y + r.h - 1);
+    }
+  }
+  if (e.tx === null) return;
+
+  const d = nextStepToward(e, e.tx, e.ty);
+  if (d === null) {
+    if (e.alert <= 0) e.tx = null; // 行けないなら目的地を決め直す
+    return;
+  }
+  e.x += DIRS[d][0];
+  e.y += DIRS[d][1];
+}
+
+// 目的地までの最短ルートの1歩目を探す（他の敵と主人公は通れない）
+function nextStepToward(e, tx, ty) {
+  const W = DATA.map.width;
+  const prev = new Int32Array(W * DATA.map.height).fill(-1);
+  const start = idx(e.x, e.y);
+  prev[start] = start;
+  const queue = [start];
+  let found = -1;
+  let head = 0;
+  while (head < queue.length && head < 900) {
+    const cur = queue[head++];
+    const cx = cur % W, cy = Math.floor(cur / W);
+    if (cx === tx && cy === ty) { found = cur; break; }
+    for (let d = 0; d < 8; d++) {
+      if (!canMove(cx, cy, d)) continue;
+      const nx = cx + DIRS[d][0], ny = cy + DIRS[d][1];
+      const ni = idx(nx, ny);
+      if (prev[ni] !== -1) continue;
+      const isGoal = nx === tx && ny === ty;
+      if (!isGoal && isOccupied(nx, ny)) continue;
+      prev[ni] = cur;
+      queue.push(ni);
+    }
+  }
+  if (found === -1) return null;
+  // ゴールからさかのぼって1歩目を求める
+  let step = found;
+  while (prev[step] !== start) step = prev[step];
+  const sx = step % W, sy = Math.floor(step / W);
+  if (isOccupied(sx, sy)) return null; // ゴールが主人公などで埋まっている
+  return dirTo(e.x, e.y, sx, sy);
+}
+
+function enemyAttack(e) {
+  const def = DATA.enemies[e.type];
+  const p = state.player;
+  e.lunge = 1;
+  e.lungeDir = dirTo(e.x, e.y, p.x, p.y);
+  if (Math.random() > def.hitRate) {
+    addLog(`${def.name}の攻撃は外れた。`);
+    addPopup(p.x, p.y, 'ミス', DATA.colors.dmgToPlayer);
+    return;
+  }
+  const dmg = calcDamage(def.atk, p.def);
+  p.hp = Math.max(0, p.hp - dmg);
+  p.hurt = 1;
+  addPopup(p.x, p.y, String(dmg), DATA.colors.dmgToPlayer);
+  addLog(`${def.name}の攻撃。${dmg}のダメージ。`);
+}
+
+// ============================================================
+// 階の移動・開始・力尽きる
+// ============================================================
 function descend() {
   const dungeon = DATA.dungeons[state.dungeonId];
   if (state.floor >= dungeon.floors) {
     showOverlay(
       '生還！',
-      `${dungeon.name}を踏破した。<br>${state.turn}ターン`,
+      `${dungeon.name}を踏破した。<br>Lv${state.player.level}　${state.turn}ターン`,
       'もう一度潜る',
       startDungeon
     );
@@ -284,14 +565,37 @@ function descend() {
   updateUI();
 }
 
+function createPlayer() {
+  const P = DATA.player;
+  return {
+    x: 0, y: 0, rx: 0, ry: 0, dir: 2,
+    level: 1, exp: 0,
+    hp: P.hp, maxHp: P.hp, atk: P.atk, def: P.def,
+    regen: 0, lunge: 0, hurt: 0,
+  };
+}
+
 function startDungeon() {
   hideOverlay();
   state.floor = 1;
   state.turn = 0;
   state.logs = [];
+  state.player = createPlayer();
   generateFloor();
   addLog(`${DATA.dungeons[state.dungeonId].name}に入った。`);
   updateUI();
+}
+
+function onDeath() {
+  releaseStick();
+  const dungeon = DATA.dungeons[state.dungeonId];
+  addLog('力尽きた……');
+  showOverlay(
+    '力尽きた……',
+    `${dungeon.name} ${state.floor}階<br>Lv${state.player.level}　${state.turn}ターン`,
+    'もう一度潜る',
+    startDungeon
+  );
 }
 
 // ============================================================
@@ -303,11 +607,27 @@ function addLog(msg) {
   $('log').innerHTML = state.logs.map((m) => `<div>${m}</div>`).join('');
 }
 
+function addPopup(x, y, text, color) {
+  state.popups.push({ x, y, text, color, t: 0 });
+}
+
 function updateUI() {
+  const p = state.player;
   $('dungeon-name').textContent = DATA.dungeons[state.dungeonId].name;
   $('floor').textContent = `${state.floor}F`;
   $('turn').textContent = `${state.turn}ターン`;
-  $('btn-action').textContent = onStairs() ? '降りる' : '足踏み';
+  $('lv').textContent = `Lv${p.level}`;
+  $('hp').textContent = `HP ${p.hp}/${p.maxHp}`;
+  const ratio = p.hp / p.maxHp;
+  const fill = $('hpfill');
+  fill.style.width = `${Math.max(0, ratio * 100)}%`;
+  fill.classList.toggle('mid', ratio <= 0.5 && ratio > 0.25);
+  fill.classList.toggle('low', ratio <= 0.25);
+
+  let label = '足踏み';
+  if (enemyInDir(p.dir)) label = '攻撃';
+  else if (onStairs()) label = '降りる';
+  $('btn-action').textContent = label;
 }
 
 function showOverlay(title, text, btnLabel, onClick) {
@@ -370,9 +690,7 @@ function render() {
         ctx.lineWidth = 1;
         ctx.strokeRect(sx + 0.5, sy + 0.5, ts - 1, ts - 1);
       }
-      // 階段
       if (x === state.stairs.x && y === state.stairs.y) drawStairs(sx, sy, ts);
-      // 今見えていないマスは暗くする
       if (!state.visible[i]) {
         ctx.fillStyle = C.fog;
         ctx.fillRect(sx, sy, ts + 0.5, ts + 0.5);
@@ -380,19 +698,52 @@ function render() {
     }
   }
 
-  // スティックで狙っているマスを枠で表示（向き変えモードは黄色）
+  // スティックで狙っているマスを枠で表示
+  // 白：進める / 赤い枠：壁 / 濃い赤：敵（攻撃） / 黄色：向き変え
   if (stick.active && stick.dir !== null) {
     const [dx, dy] = DIRS[stick.dir];
-    if (state.turnMode) {
-      ctx.strokeStyle = C.targetTurn;
-    } else {
-      ctx.strokeStyle = canMove(p.x, p.y, stick.dir) ? C.target : 'rgba(255,80,80,0.6)';
-    }
+    if (state.turnMode) ctx.strokeStyle = C.targetTurn;
+    else if (enemyInDir(stick.dir)) ctx.strokeStyle = C.targetAttack;
+    else ctx.strokeStyle = canMove(p.x, p.y, stick.dir) ? C.target : 'rgba(255,80,80,0.6)';
     ctx.lineWidth = 2;
     ctx.strokeRect((p.x + dx) * ts - camX + 2, (p.y + dy) * ts - camY + 2, ts - 4, ts - 4);
   }
 
-  drawPlayer(p.rx * ts - camX, p.ry * ts - camY, ts, p.dir);
+  // 敵（見えている敵だけ）
+  for (const e of state.enemies) {
+    if (!state.visible[idx(e.x, e.y)]) continue;
+    let ox = 0, oy = 0;
+    if (e.lunge > 0 && e.lungeDir >= 0) {
+      ox = DIRS[e.lungeDir][0] * e.lunge * ts * 0.25;
+      oy = DIRS[e.lungeDir][1] * e.lunge * ts * 0.25;
+    }
+    drawEnemy(e, e.rx * ts - camX + ox, e.ry * ts - camY + oy, ts);
+  }
+
+  // 主人公
+  let pox = 0, poy = 0;
+  if (p.lunge > 0) {
+    pox = DIRS[p.dir][0] * p.lunge * ts * 0.25;
+    poy = DIRS[p.dir][1] * p.lunge * ts * 0.25;
+  }
+  drawPlayer(p.rx * ts - camX + pox, p.ry * ts - camY + poy, ts, p.dir, p.hurt);
+
+  // ダメージ数字
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const pop of state.popups) {
+    const a = 1 - pop.t;
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.font = `bold ${Math.round(ts * 0.38)}px sans-serif`;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    const px = pop.x * ts - camX + ts / 2;
+    const py = pop.y * ts - camY + ts * 0.2 - pop.t * ts * 0.5;
+    ctx.strokeText(pop.text, px, py);
+    ctx.fillStyle = pop.color;
+    ctx.fillText(pop.text, px, py);
+  }
+  ctx.globalAlpha = 1;
 
   if (state.showMini) drawMiniMap(w, h);
 }
@@ -407,8 +758,31 @@ function drawStairs(sx, sy, ts) {
   }
 }
 
+// 仮の敵：色つきの丸＋文字、HPが減っていればHPバー
+function drawEnemy(e, sx, sy, ts) {
+  const def = DATA.enemies[e.type];
+  const cx = sx + ts / 2, cy = sy + ts / 2;
+  ctx.fillStyle = e.flash > 0 ? '#ffffff' : def.color;
+  ctx.beginPath(); ctx.arc(cx, cy, ts * 0.36, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.round(ts * 0.36)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(def.symbol, cx, cy + 1);
+  if (e.hp < e.maxHp) {
+    const bw = ts * 0.7, bh = Math.max(3, ts * 0.07);
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(cx - bw / 2, sy + ts * 0.88, bw, bh);
+    ctx.fillStyle = '#e0484f';
+    ctx.fillRect(cx - bw / 2, sy + ts * 0.88, bw * (e.hp / e.maxHp), bh);
+  }
+}
+
 // 仮の主人公：赤いマント＋紺のスーツ＋顔、向きの矢印
-function drawPlayer(sx, sy, ts, dir) {
+function drawPlayer(sx, sy, ts, dir, hurt) {
   const C = DATA.colors;
   const cx = sx + ts / 2, cy = sy + ts / 2;
   ctx.fillStyle = C.cape;
@@ -417,6 +791,11 @@ function drawPlayer(sx, sy, ts, dir) {
   ctx.beginPath(); ctx.arc(cx, cy + ts * 0.08, ts * 0.24, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = C.face;
   ctx.beginPath(); ctx.arc(cx, cy - ts * 0.12, ts * 0.16, 0, Math.PI * 2); ctx.fill();
+  // ダメージを受けた直後は赤く光る
+  if (hurt > 0) {
+    ctx.fillStyle = `rgba(255,60,60,${hurt * 0.6})`;
+    ctx.beginPath(); ctx.arc(cx, cy, ts * 0.42, 0, Math.PI * 2); ctx.fill();
+  }
   // 向き
   const [dx, dy] = DIRS[dir];
   const len = Math.hypot(dx, dy);
@@ -448,11 +827,18 @@ function drawMiniMap(w, h) {
       ctx.fillRect(ox + x * s, oy + y * s, s, s);
     }
   }
-  // 階段と主人公は見失わないよう、濃いめに表示する
+  // 階段・敵・主人公は見失わないよう、濃いめに表示する
   ctx.globalAlpha = Math.min(1, DATA.view.mapAlpha + 0.5);
   if (state.explored[idx(state.stairs.x, state.stairs.y)]) {
     ctx.fillStyle = C.stairs;
     ctx.fillRect(ox + state.stairs.x * s, oy + state.stairs.y * s, s, s);
+  }
+  ctx.fillStyle = C.miniEnemy;
+  for (const e of state.enemies) {
+    if (!state.visible[idx(e.x, e.y)]) continue;
+    ctx.beginPath();
+    ctx.arc(ox + (e.x + 0.5) * s, oy + (e.y + 0.5) * s, Math.max(2, s * 0.6), 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.fillStyle = '#ff4d6d';
   ctx.beginPath();
@@ -461,17 +847,29 @@ function drawMiniMap(w, h) {
   ctx.restore();
 }
 
-// 毎フレームの処理（主人公の表示位置をなめらかに追従させる）
+// 毎フレームの処理（動きをなめらかにする）
 let lastTime = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - lastTime) / 1000);
   lastTime = now;
-  const p = state.player;
   const k = Math.min(1, dt * 22);
-  p.rx += (p.x - p.rx) * k;
-  p.ry += (p.y - p.ry) * k;
-  if (Math.abs(p.x - p.rx) < 0.01) p.rx = p.x;
-  if (Math.abs(p.y - p.ry) < 0.01) p.ry = p.y;
+  const follow = (o) => {
+    o.rx += (o.x - o.rx) * k;
+    o.ry += (o.y - o.ry) * k;
+    if (Math.abs(o.x - o.rx) < 0.01) o.rx = o.x;
+    if (Math.abs(o.y - o.ry) < 0.01) o.ry = o.y;
+  };
+  const p = state.player;
+  follow(p);
+  p.lunge = Math.max(0, p.lunge - dt * 7);
+  p.hurt = Math.max(0, p.hurt - dt * 4);
+  for (const e of state.enemies) {
+    follow(e);
+    e.lunge = Math.max(0, (e.lunge || 0) - dt * 7);
+    e.flash = Math.max(0, e.flash - dt * 6);
+  }
+  for (const pop of state.popups) pop.t += dt * 1.4;
+  state.popups = state.popups.filter((pop) => pop.t < 1);
   render();
   requestAnimationFrame(frame);
 }
@@ -487,7 +885,7 @@ const knob = $('stick-knob');
 
 // 角度と方向の中心とのずれ（度）
 function angleDiff(a, b) {
-  let diff = Math.abs(a - b) % 360;
+  const diff = Math.abs(a - b) % 360;
   return diff > 180 ? 360 - diff : diff;
 }
 
@@ -544,9 +942,9 @@ function updateStick(e) {
   const rect = zone.getBoundingClientRect();
   const dx = e.clientX - rect.left - stick.ox;
   const dy = e.clientY - rect.top - stick.oy;
-  const dist = Math.hypot(dx, dy);
+  const d2 = Math.hypot(dx, dy);
   const R = DATA.control.stickRadius;
-  if (dist < DATA.control.deadZone) {
+  if (d2 < DATA.control.deadZone) {
     knob.style.transform = 'translate(0px, 0px)';
     setStickDir(null);
     return;
@@ -556,7 +954,7 @@ function updateStick(e) {
   const d = snapDir(angle, stick.dir);
   const [sx, sy] = DIRS[d];
   const len = Math.hypot(sx, sy);
-  const r = Math.min(dist, R);
+  const r = Math.min(d2, R);
   knob.style.transform = `translate(${(sx / len) * r}px, ${(sy / len) * r}px)`;
   setStickDir(d);
 }
@@ -577,7 +975,7 @@ function releaseStick() {
 
 zone.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  if (stick.active) return;
+  if (stick.active || state.locked) return;
   zone.setPointerCapture(e.pointerId);
   const rect = zone.getBoundingClientRect();
   stick.active = true;
