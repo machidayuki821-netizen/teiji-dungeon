@@ -44,6 +44,22 @@ html, body {
   line-height: 1.6;
 }
 #floor { font-weight: bold; font-size: 16px; }
+#lv { font-weight: bold; }
+#hpbar {
+  height: 5px;
+  margin: 2px 0 2px;
+  background: #3a2a2e;
+  border-radius: 3px;
+  overflow: hidden;
+}
+#hpfill {
+  height: 100%;
+  width: 100%;
+  background: #4fc36a;
+  transition: width 0.2s, background-color 0.2s;
+}
+#hpfill.mid { background: #e8c35a; }
+#hpfill.low { background: #e0484f; }
 #threads { letter-spacing: 2px; }
 
 /* ---- マップ ---- */
