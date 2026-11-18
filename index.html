@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>異世界ダンジョンから定時で帰りたい（試作）</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 上部：ステータス -->
+    <header id="status">
+      <div class="row">
+        <span id="dungeon-name"></span>
+        <span id="floor"></span>
+      </div>
+      <div class="row">
+        <span id="hp">HP 30/30</span>
+        <span id="threads">🧵🧵🧵</span>
+        <span id="turn"></span>
+      </div>
+    </header>
+
+    <!-- 中央：マップ -->
+    <main id="view">
+      <canvas id="map"></canvas>
+    </main>
+
+    <!-- ログ -->
+    <section id="log"></section>
+
+    <!-- 下部：操作エリア -->
+    <section id="controls">
+      <div id="stick-zone">
+        <div id="stick-base"><div id="stick-knob"></div></div>
+        <div id="stick-hint">ここをなぞって移動</div>
+      </div>
+      <div id="buttons">
+        <button id="btn-action" class="big">足踏み</button>
+        <div class="small-row">
+          <button id="btn-item" disabled>道具</button>
+          <button id="btn-mini">地図</button>
+          <button id="btn-swap" title="左右を入れ替え">⇄</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 生還などのメッセージ -->
+    <div id="overlay" class="hidden">
+      <div class="panel">
+        <h2 id="ov-title"></h2>
+        <p id="ov-text"></p>
+        <button id="ov-btn"></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
