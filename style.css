@@ -201,4 +201,17 @@ button.on {
 }
 #overlay h2 { margin: 0 0 10px; color: #e8c35a; }
 #overlay p { margin: 0 0 18px; line-height: 1.6; }
-#overlay button { width: 100%; font-size: 16px; }
+#ov-buttons {
+  display: flex;
+  gap: 10px;
+}
+#ov-buttons button {
+  flex: 1;
+  font-size: 16px;
+  padding: 14px 0;
+}
+#ov-buttons button.primary {
+  background: #5a1a28;
+  border-color: #8b1e32;
+  font-weight: bold;
+}
