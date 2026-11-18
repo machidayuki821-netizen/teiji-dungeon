@@ -305,8 +305,8 @@ function stepPlayer(d) {
   let keepGoing = true;
   const nowRoom = roomAt(p.x, p.y);
   if (onStairs()) {
-    addLog('階段がある。');
     keepGoing = false;
+    askStairs();
   }
   if (prevRoom === -1 && nowRoom !== -1) keepGoing = false; // 通路から部屋に入った
   if (prevRoom !== -1 && nowRoom === -1) keepGoing = false; // 部屋から通路に出た
@@ -548,14 +548,27 @@ function enemyAttack(e) {
 // ============================================================
 // 階の移動・開始・力尽きる
 // ============================================================
+// 階段に乗ったときの確認
+function askStairs() {
+  const dungeon = DATA.dungeons[state.dungeonId];
+  const last = state.floor >= dungeon.floors;
+  showOverlay(
+    '階段がある',
+    last ? 'この先は出口だ。<br>地上へ戻りますか？' : `${state.floor + 1}階へ降りますか？`,
+    [
+      { label: last ? '戻る' : '降りる', primary: true, onClick: () => { hideOverlay(); descend(); } },
+      { label: 'そのまま', onClick: () => { hideOverlay(); addLog('階段の上にいる。'); } },
+    ]
+  );
+}
+
 function descend() {
   const dungeon = DATA.dungeons[state.dungeonId];
   if (state.floor >= dungeon.floors) {
     showOverlay(
       '生還！',
       `${dungeon.name}を踏破した。<br>Lv${state.player.level}　${state.turn}ターン`,
-      'もう一度潜る',
-      startDungeon
+      [{ label: 'もう一度潜る', primary: true, onClick: startDungeon }]
     );
     return;
   }
@@ -593,8 +606,7 @@ function onDeath() {
   showOverlay(
     '力尽きた……',
     `${dungeon.name} ${state.floor}階<br>Lv${state.player.level}　${state.turn}ターン`,
-    'もう一度潜る',
-    startDungeon
+    [{ label: 'もう一度潜る', primary: true, onClick: startDungeon }]
   );
 }
 
@@ -630,12 +642,21 @@ function updateUI() {
   $('btn-action').textContent = label;
 }
 
-function showOverlay(title, text, btnLabel, onClick) {
+// メッセージ画面を出す。buttons は [{ label, onClick, primary }] の配列
+function showOverlay(title, text, buttons) {
   state.locked = true;
   $('ov-title').textContent = title;
   $('ov-text').innerHTML = text;
-  $('ov-btn').textContent = btnLabel;
-  $('ov-btn').onclick = onClick;
+  const box = $('ov-buttons');
+  box.innerHTML = '';
+  buttons.forEach((b, i) => {
+    const btn = document.createElement('button');
+    btn.textContent = b.label;
+    if (b.primary) btn.classList.add('primary');
+    btn.dataset.index = i;
+    btn.onclick = b.onClick;
+    box.appendChild(btn);
+  });
   $('overlay').classList.remove('hidden');
 }
 function hideOverlay() {
@@ -758,7 +779,7 @@ function drawStairs(sx, sy, ts) {
   }
 }
 
-// 仮の敵：色つきの丸＋文字、HPが減っていればHPバー
+// 仮の敵：色つきの丸＋文字（残りHPはあえて表示しない）
 function drawEnemy(e, sx, sy, ts) {
   const def = DATA.enemies[e.type];
   const cx = sx + ts / 2, cy = sy + ts / 2;
@@ -772,13 +793,6 @@ function drawEnemy(e, sx, sy, ts) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(def.symbol, cx, cy + 1);
-  if (e.hp < e.maxHp) {
-    const bw = ts * 0.7, bh = Math.max(3, ts * 0.07);
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(cx - bw / 2, sy + ts * 0.88, bw, bh);
-    ctx.fillStyle = '#e0484f';
-    ctx.fillRect(cx - bw / 2, sy + ts * 0.88, bw * (e.hp / e.maxHp), bh);
-  }
 }
 
 // 仮の主人公：赤いマント＋紺のスーツ＋顔、向きの矢印
@@ -1040,8 +1054,11 @@ const KEY_DIRS = {
   d: 0, c: 1, x: 2, z: 3, a: 4, q: 5, w: 6, e: 7,
 };
 window.addEventListener('keydown', (e) => {
+  // メッセージ画面：Enter/スペースで1つ目のボタン、Escで2つ目のボタン
   if (state.locked) {
-    if (e.key === 'Enter' || e.key === ' ') $('ov-btn').click();
+    const btns = $('ov-buttons').querySelectorAll('button');
+    if ((e.key === 'Enter' || e.key === ' ') && btns[0]) { e.preventDefault(); btns[0].click(); }
+    if (e.key === 'Escape' && btns[1]) btns[1].click();
     return;
   }
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
