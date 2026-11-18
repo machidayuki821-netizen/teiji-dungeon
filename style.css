@@ -179,6 +179,92 @@ button.on {
 }
 .small-row button { flex: 1; }
 
+/* ---- 持ち物画面 ---- */
+#bag {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0,0,0,0.45);
+  z-index: 8;
+}
+#bag.hidden { display: none; }
+#bag .sheet {
+  width: 100%;
+  max-width: 520px;
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  background: #1f1c27;
+  border-top: 2px solid #8b1e32;
+  border-radius: 16px 16px 0 0;
+  padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+}
+.sheet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 2px 4px 8px;
+  font-weight: bold;
+}
+#bag-stats { font-size: 13px; font-weight: normal; color: #bbb; }
+#bag-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 80px;
+  touch-action: pan-y;
+}
+.item-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  margin-bottom: 4px;
+  text-align: left;
+  font-size: 15px;
+  border-radius: 8px;
+}
+.item-row.selected {
+  background: #4a2530;
+  border-color: #e8c35a;
+}
+.item-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  line-height: 26px;
+  text-align: center;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: bold;
+  color: #222;
+}
+.item-name { flex: 1; }
+.item-equip { color: #e8c35a; font-weight: bold; font-size: 13px; }
+.bag-empty { padding: 20px; text-align: center; color: #888; }
+#bag-desc {
+  min-height: 1.6em;
+  padding: 6px 4px;
+  font-size: 13px;
+  color: #ccc;
+}
+#bag-actions {
+  display: flex;
+  gap: 8px;
+}
+#bag-actions button {
+  flex: 1;
+  padding: 14px 0;
+  font-size: 15px;
+}
+#bag-actions button.primary {
+  background: #5a1a28;
+  border-color: #8b1e32;
+  font-weight: bold;
+}
+
 /* ---- オーバーレイ ---- */
 #overlay {
   position: fixed;
