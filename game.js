@@ -1,5 +1,5 @@
 // ============================================================
-// game.js ― ゲームの仕組み（段階②：戦う）
+// game.js ― ゲームの仕組み（段階③：拾う）
 // ============================================================
 'use strict';
 
@@ -25,6 +25,13 @@ const state = {
   stairs: { x: 0, y: 0 },
   player: null,     // startDungeon で作る
   enemies: [],      // この階にいる敵
+  floorItems: [],   // この階に落ちているアイテム {x, y, item}
+  bag: [],          // 持ち物 [{uid, id}]
+  identified: new Set(), // 識別済みのアイテムID
+  looks: {},        // 未識別のときの見た目 {アイテムID: '青い草'}
+  bagOpen: false,   // 持ち物画面を開いているか
+  bagMode: 'normal',// normal=通常 / identify=識別するアイテムを選ぶ
+  bagSel: null,     // 選んでいるアイテムのuid
   popups: [],       // ダメージ数字などの表示
   logs: [],
   showMini: false,  // 地図の常時表示
@@ -32,6 +39,7 @@ const state = {
   locked: false,    // オーバーレイ表示中など、操作を受け付けない状態
 };
 let nextEnemyId = 1;
+let nextItemUid = 1;
 
 // ---- 便利関数 ----
 const $ = (id) => document.getElementById(id);
@@ -57,6 +65,36 @@ function enemyAt(x, y) { return state.enemies.find((e) => e.x === x && e.y === y
 function isOccupied(x, y) {
   const p = state.player;
   return (p.x === x && p.y === y) || !!enemyAt(x, y);
+}
+function floorItemAt(x, y) { return state.floorItems.find((f) => f.x === x && f.y === y) || null; }
+// 操作を受け付けない状態か（メッセージ画面や持ち物画面を開いている）
+function busy() { return state.locked || state.bagOpen; }
+
+// ---- アイテム関連の便利関数 ----
+function itemDef(item) { return DATA.items[item.id]; }
+function newItem(id) { return { uid: nextItemUid++, id }; }
+function isKnown(id) {
+  const cat = DATA.items[id].cat;
+  if (!DATA.unknownNames[cat]) return true;            // 武器・盾・投げ物は最初から分かる
+  if (DATA.dungeons[state.dungeonId].identifyAll) return true;
+  return state.identified.has(id);
+}
+function itemName(item) {
+  return isKnown(item.id) ? itemDef(item).name : state.looks[item.id];
+}
+function identify(id) {
+  if (isKnown(id)) return false;
+  state.identified.add(id);
+  return true;
+}
+// 装備込みの攻撃力・防御力
+function playerAtk() {
+  const p = state.player;
+  return p.atk + (p.weapon ? itemDef(p.weapon).atk : 0);
+}
+function playerDef() {
+  const p = state.player;
+  return p.def + (p.shield ? itemDef(p.shield).def : 0);
 }
 
 // ============================================================
@@ -169,6 +207,7 @@ function generateFloor() {
   state.explored = new Uint8Array(W * H);
   state.visible = new Uint8Array(W * H);
   state.enemies = [];
+  state.floorItems = [];
   state.popups = [];
   const p = state.player;
   p.x = p.rx = start.x;
@@ -180,7 +219,34 @@ function generateFloor() {
   const startRoomIndex = rooms.indexOf(startRoom);
   for (let i = 0; i < count; i++) spawnEnemy(startRoomIndex);
 
+  // アイテムを配置（階段と主人公の足元には置かない）
+  const itemCount = rand(dungeon.itemStart[0], dungeon.itemStart[1]);
+  const realList = rooms.filter((r) => !r.dummy);
+  for (let i = 0; i < itemCount; i++) {
+    for (let tries = 0; tries < 30; tries++) {
+      const r = realList[rand(0, realList.length - 1)];
+      const x = rand(r.x, r.x + r.w - 1), y = rand(r.y, r.y + r.h - 1);
+      if (floorItemAt(x, y)) continue;
+      if (x === stairs.x && y === stairs.y) continue;
+      if (x === p.x && y === p.y) continue;
+      state.floorItems.push({ x, y, item: newItem(pickItemType()) });
+      break;
+    }
+  }
+
   updateVisibility();
+}
+
+function pickItemType() {
+  const table = DATA.dungeons[state.dungeonId].itemTable
+    .filter((s) => state.floor >= s.from && state.floor <= s.to);
+  const total = table.reduce((sum, s) => sum + s.weight, 0);
+  let r = Math.random() * total;
+  for (const s of table) {
+    r -= s.weight;
+    if (r < 0) return s.id;
+  }
+  return table[0].id;
 }
 
 // その位置がどの部屋の中か（通路なら -1）
@@ -225,7 +291,7 @@ function spawnEnemy(avoidRoom) {
     state.enemies.push({
       id: nextEnemyId++, type, x, y, rx: x, ry: y,
       hp: def.hp, maxHp: def.hp,
-      alert: 0, tx: null, ty: null, flash: 0,
+      alert: 0, tx: null, ty: null, flash: 0, sleep: 0,
     });
     return;
   }
@@ -280,7 +346,7 @@ function enemyInDir(d) {
 
 // 1歩動く（敵がいれば攻撃）。連続移動を続けてよければ true を返す
 function stepPlayer(d) {
-  if (state.locked) return false;
+  if (busy()) return false;
   const p = state.player;
   p.dir = d;
 
@@ -298,11 +364,15 @@ function stepPlayer(d) {
   p.y += DIRS[d][1];
   updateVisibility();
   const hpBefore = p.hp;
+  // 足元のアイテムを拾う（拾うのはターンを使わない）
+  const pickedSomething = !!floorItemAt(p.x, p.y);
+  if (pickedSomething) pickUp();
   endTurn();
   if (state.locked) return false;
 
   // 連続移動を止める場所
   let keepGoing = true;
+  if (pickedSomething) keepGoing = false; // アイテムのあるマスに乗った
   const nowRoom = roomAt(p.x, p.y);
   if (onStairs()) {
     keepGoing = false;
@@ -331,7 +401,7 @@ function isJunction(x, y) {
 
 // その場で向きだけ変える（ターンは進まない）
 function turnPlayer(d) {
-  if (state.locked) return;
+  if (busy()) return;
   state.player.dir = d;
   updateUI();
 }
@@ -356,9 +426,10 @@ function playerAttack(e) {
     addPopup(e.x, e.y, 'ミス', DATA.colors.dmgToEnemy);
     return;
   }
-  const dmg = calcDamage(p.atk, def.def);
+  const dmg = calcDamage(playerAtk(), def.def);
   e.hp -= dmg;
   e.flash = 1;
+  e.sleep = 0; // 攻撃されたら目を覚ます
   e.alert = DATA.ai.alertTurns;
   addPopup(e.x, e.y, String(dmg), DATA.colors.dmgToEnemy);
   if (e.hp <= 0) {
@@ -386,13 +457,16 @@ function gainExp(amount) {
 
 // 決定ボタン：向いている方向に敵がいれば攻撃、階段の上なら降りる、それ以外は足踏み
 function doAction() {
-  if (state.locked) return;
-  const target = enemyInDir(state.player.dir);
+  if (busy()) return;
+  const p = state.player;
+  const target = enemyInDir(p.dir);
   if (target) {
     playerAttack(target);
     endTurn();
   } else if (onStairs()) {
     descend();
+  } else if (floorItemAt(p.x, p.y)) {
+    if (pickUp()) endTurn();
   } else {
     addLog('足踏みした。');
     endTurn();
@@ -405,6 +479,12 @@ function doAction() {
 function endTurn() {
   const p = state.player;
   state.turn++;
+
+  // 隠れ身の効果時間
+  if (p.hidden > 0) {
+    p.hidden--;
+    if (p.hidden === 0) addLog('隠れ身の効果が切れた。');
+  }
 
   // 自然回復
   if (p.hp < p.maxHp) {
@@ -441,6 +521,7 @@ function endTurn() {
 // ============================================================
 function enemyCanSeePlayer(e) {
   const p = state.player;
+  if (p.hidden > 0) return false;
   const er = roomAt(e.x, e.y);
   if (er !== -1 && er === roomAt(p.x, p.y)) return true;
   return dist(e.x, e.y, p.x, p.y) <= DATA.ai.sightRange;
@@ -449,6 +530,12 @@ function enemyCanSeePlayer(e) {
 function enemyAct(e) {
   const def = DATA.enemies[e.type];
   const p = state.player;
+
+  // 眠っている敵は動かない
+  if (e.sleep > 0) {
+    e.sleep--;
+    return;
+  }
 
   // 主人公に気づいているか
   if (enemyCanSeePlayer(e)) {
@@ -538,7 +625,7 @@ function enemyAttack(e) {
     addPopup(p.x, p.y, 'ミス', DATA.colors.dmgToPlayer);
     return;
   }
-  const dmg = calcDamage(def.atk, p.def);
+  const dmg = calcDamage(def.atk, playerDef());
   p.hp = Math.max(0, p.hp - dmg);
   p.hurt = 1;
   addPopup(p.x, p.y, String(dmg), DATA.colors.dmgToPlayer);
@@ -585,6 +672,8 @@ function createPlayer() {
     level: 1, exp: 0,
     hp: P.hp, maxHp: P.hp, atk: P.atk, def: P.def,
     regen: 0, lunge: 0, hurt: 0,
+    weapon: null, shield: null, // 装備中のアイテム
+    hidden: 0,                  // 隠れ身の残りターン
   };
 }
 
@@ -594,6 +683,8 @@ function startDungeon() {
   state.turn = 0;
   state.logs = [];
   state.player = createPlayer();
+  state.bag = [];
+  setupUnknownNames();
   generateFloor();
   addLog(`${DATA.dungeons[state.dungeonId].name}に入った。`);
   updateUI();
@@ -601,6 +692,7 @@ function startDungeon() {
 
 function onDeath() {
   releaseStick();
+  closeBag();
   const dungeon = DATA.dungeons[state.dungeonId];
   addLog('力尽きた……');
   showOverlay(
@@ -608,6 +700,302 @@ function onDeath() {
     `${dungeon.name} ${state.floor}階<br>Lv${state.player.level}　${state.turn}ターン`,
     [{ label: 'もう一度潜る', primary: true, onClick: startDungeon }]
   );
+}
+
+// ============================================================
+// アイテム：拾う・使う・装備・投げる・置く
+// ============================================================
+// 迷宮に入るたびに、草と巻物の見た目をシャッフルする
+function setupUnknownNames() {
+  state.identified = new Set();
+  state.looks = {};
+  for (const cat of Object.keys(DATA.unknownNames)) {
+    const names = shuffle([...DATA.unknownNames[cat]]);
+    const ids = Object.keys(DATA.items).filter((id) => DATA.items[id].cat === cat);
+    ids.forEach((id, i) => { state.looks[id] = names[i % names.length]; });
+  }
+}
+
+// 足元のアイテムを拾う。拾えたら true
+function pickUp() {
+  const p = state.player;
+  const f = floorItemAt(p.x, p.y);
+  if (!f) return false;
+  if (state.bag.length >= DATA.bag.size) {
+    addLog(`持ち物がいっぱいで、${itemName(f.item)}を拾えない。`);
+    return false;
+  }
+  state.floorItems = state.floorItems.filter((x) => x !== f);
+  state.bag.push(f.item);
+  addLog(`${itemName(f.item)}を拾った。`);
+  return true;
+}
+
+function removeFromBag(item) {
+  const p = state.player;
+  state.bag = state.bag.filter((x) => x !== item);
+  if (p.weapon === item) p.weapon = null;
+  if (p.shield === item) p.shield = null;
+}
+
+function isEquipped(item) {
+  const p = state.player;
+  return p.weapon === item || p.shield === item;
+}
+
+// 装備する／外す
+function toggleEquip(item) {
+  const p = state.player;
+  const def = itemDef(item);
+  const slot = def.cat === 'weapon' ? 'weapon' : 'shield';
+  if (p[slot] === item) {
+    p[slot] = null;
+    addLog(`${def.name}を外した。`);
+  } else {
+    p[slot] = item;
+    addLog(`${def.name}を装備した。`);
+  }
+}
+
+// 草を飲む・巻物を読む。ターンを使う場合は true
+function useItem(item) {
+  const p = state.player;
+  const def = itemDef(item);
+  const before = itemName(item);
+
+  if (def.cat === 'herb') {
+    removeFromBag(item);
+    const wasUnknown = identify(item.id);
+    addLog(wasUnknown ? `${before}を食べた。これは${def.name}だった！` : `${def.name}を食べた。`);
+    if (def.heal) {
+      if (p.hp >= p.maxHp) {
+        p.maxHp += def.maxUp;
+        p.hp = p.maxHp;
+        addLog(`最大HPが${def.maxUp}上がった。`);
+      } else {
+        const heal = Math.min(def.heal, p.maxHp - p.hp);
+        p.hp += heal;
+        addPopup(p.x, p.y, `+${heal}`, DATA.colors.heal);
+      }
+    }
+    if (def.damage) {
+      p.hp = Math.max(1, p.hp - def.damage);
+      p.hurt = 1;
+      addPopup(p.x, p.y, String(def.damage), DATA.colors.dmgToPlayer);
+      addLog(`まずい！ ${def.damage}のダメージ。`);
+    }
+    if (def.atkDown) {
+      p.atk = Math.max(1, p.atk - def.atkDown);
+      addLog(`力が${def.atkDown}下がった。`);
+    }
+    if (def.atkUp) {
+      p.atk += def.atkUp;
+      addLog(`力が${def.atkUp}上がった！`);
+    }
+    if (def.levelUp) {
+      const table = DATA.player.expTable;
+      const need = table[p.level - 1];
+      if (need !== undefined) gainExp(need - p.exp);
+    }
+    return true;
+  }
+
+  if (def.cat === 'scroll') {
+    removeFromBag(item);
+    const wasUnknown = identify(item.id);
+    addLog(wasUnknown ? `${before}を読んだ。これは${def.name}だった！` : `${def.name}を読んだ。`);
+    if (def.effect === 'map') {
+      revealMap();
+      addLog('この階の地形が分かった。');
+    } else if (def.effect === 'sleep') {
+      const targets = state.enemies.filter((e) => state.visible[idx(e.x, e.y)]);
+      targets.forEach((e) => { e.sleep = DATA.effects.sleepTurns; });
+      addLog(targets.length ? '敵は眠ってしまった。' : 'しかし何も起こらなかった。');
+    } else if (def.effect === 'hide') {
+      p.hidden = DATA.effects.hideTurns;
+      state.enemies.forEach((e) => { e.alert = 0; });
+      addLog('姿が見えにくくなった。');
+    } else if (def.effect === 'identify') {
+      // 識別するアイテムを選ぶ画面に切り替える（ターンは選んだ後に使う）
+      const unknown = state.bag.filter((x) => !isKnown(x.id));
+      if (unknown.length === 0) {
+        addLog('しかし識別するものがなかった。');
+        return true;
+      }
+      state.bagMode = 'identify';
+      state.bagSel = null;
+      renderBag();
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+function revealMap() {
+  const W = DATA.map.width, H = DATA.map.height;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (state.map[y][x] === T_WALL) continue;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (inMap(x + dx, y + dy)) state.explored[idx(x + dx, y + dy)] = 1;
+        }
+      }
+    }
+  }
+}
+
+// 向いている方向に投げる
+function throwItem(item) {
+  const p = state.player;
+  const def = itemDef(item);
+  const name = itemName(item);
+  removeFromBag(item);
+  const [dx, dy] = DIRS[p.dir];
+  let x = p.x, y = p.y;
+  for (let i = 0; i < DATA.bag.throwRange; i++) {
+    if (!canMove(x, y, p.dir)) break;
+    x += dx; y += dy;
+    const e = enemyAt(x, y);
+    if (e) {
+      const edef = DATA.enemies[e.type];
+      const base = def.throwDmg || DATA.bag.throwBaseDmg;
+      const dmg = calcDamage(base, 0);
+      e.hp -= dmg;
+      e.flash = 1;
+      e.sleep = 0;
+      e.alert = DATA.ai.alertTurns;
+      addPopup(e.x, e.y, String(dmg), DATA.colors.dmgToEnemy);
+      if (e.hp <= 0) {
+        state.enemies = state.enemies.filter((z) => z !== e);
+        addLog(`${name}が${edef.name}に当たった。${edef.name}をたおした。経験値${edef.exp}`);
+        gainExp(edef.exp);
+      } else {
+        addLog(`${name}が${edef.name}に当たった。${dmg}のダメージ。`);
+      }
+      return;
+    }
+  }
+  // 当たらなかったら、止まった場所に落ちる（すでに何かあれば消える）
+  if (!floorItemAt(x, y) && !(x === state.stairs.x && y === state.stairs.y) && !(x === p.x && y === p.y)) {
+    state.floorItems.push({ x, y, item });
+    addLog(`${name}を投げた。`);
+  } else {
+    addLog(`${name}を投げた。${name}はどこかへ消えた。`);
+  }
+}
+
+// 足元に置く
+function dropItem(item) {
+  const p = state.player;
+  if (floorItemAt(p.x, p.y) || onStairs()) {
+    addLog('ここには置けない。');
+    return false;
+  }
+  const name = itemName(item);
+  removeFromBag(item);
+  state.floorItems.push({ x: p.x, y: p.y, item });
+  addLog(`${name}を置いた。`);
+  return true;
+}
+
+// ============================================================
+// 持ち物画面
+// ============================================================
+function openBag() {
+  if (busy()) return;
+  releaseStick();
+  state.bagOpen = true;
+  state.bagMode = 'normal';
+  state.bagSel = null;
+  renderBag();
+  $('bag').classList.remove('hidden');
+}
+
+function closeBag() {
+  state.bagOpen = false;
+  state.bagMode = 'normal';
+  state.bagSel = null;
+  $('bag').classList.add('hidden');
+}
+
+// 持ち物画面での操作のあと、ターンを進めて画面を閉じる
+function bagActionDone(usedTurn) {
+  closeBag();
+  if (usedTurn) endTurn();
+  else updateUI();
+}
+
+function renderBag() {
+  const identifyMode = state.bagMode === 'identify';
+  $('bag-title').textContent = identifyMode ? 'どれを識別する？' : `持ち物（${state.bag.length}/${DATA.bag.size}）`;
+  $('bag-stats').textContent = `攻撃 ${playerAtk()}　防御 ${playerDef()}`;
+
+  const list = $('bag-list');
+  list.innerHTML = '';
+  const items = identifyMode ? state.bag.filter((x) => !isKnown(x.id)) : state.bag;
+  if (items.length === 0) {
+    list.innerHTML = '<div class="bag-empty">何も持っていない</div>';
+  }
+  for (const item of items) {
+    const def = itemDef(item);
+    const cat = DATA.itemCats[def.cat];
+    const row = document.createElement('button');
+    row.className = 'item-row' + (state.bagSel === item.uid ? ' selected' : '');
+    row.innerHTML =
+      `<span class="item-icon" style="background:${cat.color}">${cat.symbol}</span>` +
+      `<span class="item-name">${itemName(item)}</span>` +
+      (isEquipped(item) ? '<span class="item-equip">装備中</span>' : '');
+    row.onclick = () => {
+      if (identifyMode) {
+        identify(item.id);
+        addLog(`${state.looks[item.id]}は${def.name}だった！`);
+        bagActionDone(true);
+        return;
+      }
+      state.bagSel = item.uid;
+      renderBag();
+    };
+    list.appendChild(row);
+  }
+
+  // 説明と操作ボタン
+  const sel = state.bag.find((x) => x.uid === state.bagSel);
+  const desc = $('bag-desc');
+  const actions = $('bag-actions');
+  actions.innerHTML = '';
+  const addBtn = (label, fn, primary) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (primary) b.classList.add('primary');
+    b.onclick = fn;
+    actions.appendChild(b);
+  };
+
+  if (identifyMode) {
+    desc.textContent = '識別したいアイテムを選んでください。';
+    addBtn('やめる', () => { addLog('識別をやめた。'); bagActionDone(true); });
+    return;
+  }
+  if (!sel) {
+    desc.textContent = items.length ? 'アイテムを選んでください。' : '';
+    addBtn('閉じる', closeBag);
+    return;
+  }
+
+  const def = itemDef(sel);
+  desc.textContent = isKnown(sel.id) ? def.desc : 'まだ正体が分からない。';
+  if (def.cat === 'weapon' || def.cat === 'shield') {
+    addBtn(isEquipped(sel) ? '外す' : '装備', () => { toggleEquip(sel); bagActionDone(true); }, true);
+  } else if (def.cat === 'herb') {
+    addBtn('食べる', () => { const t = useItem(sel); if (state.bagMode !== 'identify') bagActionDone(t); }, true);
+  } else if (def.cat === 'scroll') {
+    addBtn('読む', () => { const t = useItem(sel); if (state.bagMode !== 'identify') bagActionDone(t); }, true);
+  }
+  addBtn('投げる', () => { throwItem(sel); bagActionDone(true); });
+  addBtn('置く', () => { const t = dropItem(sel); bagActionDone(t); });
+  addBtn('閉じる', closeBag);
 }
 
 // ============================================================
@@ -639,6 +1027,7 @@ function updateUI() {
   let label = '足踏み';
   if (enemyInDir(p.dir)) label = '攻撃';
   else if (onStairs()) label = '降りる';
+  else if (floorItemAt(p.x, p.y)) label = '拾う';
   $('btn-action').textContent = label;
 }
 
@@ -730,6 +1119,12 @@ function render() {
     ctx.strokeRect((p.x + dx) * ts - camX + 2, (p.y + dy) * ts - camY + 2, ts - 4, ts - 4);
   }
 
+  // 落ちているアイテム（一度見えた場所のもの）
+  for (const f of state.floorItems) {
+    if (!state.explored[idx(f.x, f.y)]) continue;
+    drawFloorItem(f, f.x * ts - camX, f.y * ts - camY, ts, !state.visible[idx(f.x, f.y)]);
+  }
+
   // 敵（見えている敵だけ）
   for (const e of state.enemies) {
     if (!state.visible[idx(e.x, e.y)]) continue;
@@ -747,7 +1142,9 @@ function render() {
     pox = DIRS[p.dir][0] * p.lunge * ts * 0.25;
     poy = DIRS[p.dir][1] * p.lunge * ts * 0.25;
   }
+  if (p.hidden > 0) ctx.globalAlpha = 0.45; // 隠れ身中は半透明
   drawPlayer(p.rx * ts - camX + pox, p.ry * ts - camY + poy, ts, p.dir, p.hurt);
+  ctx.globalAlpha = 1;
 
   // ダメージ数字
   ctx.textAlign = 'center';
@@ -793,6 +1190,31 @@ function drawEnemy(e, sx, sy, ts) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(def.symbol, cx, cy + 1);
+  // 眠っている敵
+  if (e.sleep > 0) {
+    ctx.font = `bold ${Math.round(ts * 0.26)}px sans-serif`;
+    ctx.fillStyle = '#9fd3ff';
+    ctx.fillText('Zz', cx + ts * 0.3, cy - ts * 0.3);
+  }
+}
+
+// 仮のアイテム：種類ごとの色の四角＋文字
+function drawFloorItem(f, sx, sy, ts, dim) {
+  const cat = DATA.itemCats[itemDef(f.item).cat];
+  const s = ts * 0.5;
+  const x = sx + (ts - s) / 2, y = sy + (ts - s) / 2;
+  ctx.globalAlpha = dim ? 0.5 : 1;
+  ctx.fillStyle = cat.color;
+  ctx.fillRect(x, y, s, s);
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, s, s);
+  ctx.fillStyle = '#222';
+  ctx.font = `bold ${Math.round(s * 0.62)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(cat.symbol, sx + ts / 2, sy + ts / 2 + 1);
+  ctx.globalAlpha = 1;
 }
 
 // 仮の主人公：赤いマント＋紺のスーツ＋顔、向きの矢印
@@ -846,6 +1268,11 @@ function drawMiniMap(w, h) {
   if (state.explored[idx(state.stairs.x, state.stairs.y)]) {
     ctx.fillStyle = C.stairs;
     ctx.fillRect(ox + state.stairs.x * s, oy + state.stairs.y * s, s, s);
+  }
+  ctx.fillStyle = C.miniItem;
+  for (const f of state.floorItems) {
+    if (!state.explored[idx(f.x, f.y)]) continue;
+    ctx.fillRect(ox + (f.x + 0.2) * s, oy + (f.y + 0.2) * s, s * 0.6, s * 0.6);
   }
   ctx.fillStyle = C.miniEnemy;
   for (const e of state.enemies) {
@@ -989,7 +1416,7 @@ function releaseStick() {
 
 zone.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  if (stick.active || state.locked) return;
+  if (stick.active || busy()) return;
   zone.setPointerCapture(e.pointerId);
   const rect = zone.getBoundingClientRect();
   stick.active = true;
@@ -1037,6 +1464,13 @@ function setShowMap(on) {
 
 onPress('btn-action', doAction);
 onPress('btn-turn', () => setTurnMode(!state.turnMode));
+onPress('btn-item', openBag);
+// 持ち物画面の外側（暗い部分）を触ったら閉じる
+$('bag').addEventListener('pointerdown', (e) => {
+  if (e.target.id !== 'bag') return;
+  if (state.bagMode === 'identify') return; // 識別の選択中は閉じない
+  closeBag();
+});
 onPress('btn-mini', () => setShowMap(!state.showMini));
 onPress('btn-swap', () => {
   const swapped = $('app').classList.toggle('swapped');
@@ -1045,7 +1479,7 @@ onPress('btn-swap', () => {
 
 // ============================================================
 // 操作：キーボード（PCでの確認用）
-// 矢印キー / テンキー / Q W E A D Z X C で8方向、スペースで決定、Mで地図
+// 矢印キー / テンキー / Q W E A D Z X C で8方向、スペースで決定、Mで地図、Iで持ち物
 // Shiftを押しながら方向キーで、向きだけ変える
 // ============================================================
 const KEY_DIRS = {
@@ -1061,7 +1495,13 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && btns[1]) btns[1].click();
     return;
   }
+  // 持ち物画面：Escで閉じる
+  if (state.bagOpen) {
+    if (e.key === 'Escape' && state.bagMode !== 'identify') closeBag();
+    return;
+  }
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (k === 'i') { openBag(); return; }
   if (k in KEY_DIRS) {
     e.preventDefault();
     if (e.shiftKey) turnPlayer(KEY_DIRS[k]);
