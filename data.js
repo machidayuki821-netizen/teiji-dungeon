@@ -29,9 +29,50 @@ const DATA = {
     repeatInterval: 170, // 連続移動の間隔（ミリ秒）
   },
 
+  // 主人公の能力（迷宮に入るたびにこの値から始まる）
+  player: {
+    hp: 30,             // 最大HP
+    atk: 4,             // 攻撃力
+    def: 0,             // 防御力
+    hitRate: 0.92,      // 攻撃が当たる確率
+    regenRate: 0.012,   // 1ターンごとに回復する量（最大HPに対する割合）
+    // レベルアップに必要な累計経験値（左から Lv2, Lv3, Lv4 ...）
+    expTable: [10, 25, 45, 70, 100, 140, 190, 250, 320, 400, 500, 620],
+    // レベルが1上がるごとの上昇量
+    levelUp: { hp: 5, atk: 1 },
+  },
+
+  // 敵の定義
+  // move: 'chase' = まっすぐ追ってくる / 'erratic' = ふらふら動く（半分の確率でランダム移動）
+  enemies: {
+    slime:  { name: 'スライム', symbol: 'ス', color: '#4fae5a', hp: 6,  atk: 2, def: 0, exp: 3,  hitRate: 0.85, move: 'chase' },
+    bat:    { name: 'コウモリ', symbol: 'モ', color: '#7a5aa8', hp: 7,  atk: 3, def: 0, exp: 5,  hitRate: 0.85, move: 'erratic' },
+    kobold: { name: 'コボルド', symbol: 'コ', color: '#a8743a', hp: 11, atk: 3, def: 1, exp: 7,  hitRate: 0.88, move: 'chase' },
+    goblin: { name: 'ゴブリン', symbol: 'ゴ', color: '#3f7f7a', hp: 16, atk: 5, def: 2, exp: 12, hitRate: 0.88, move: 'chase' },
+  },
+
   // 迷宮の定義
   dungeons: {
-    cave: { name: '村はずれの洞窟', floors: 10 },
+    cave: {
+      name: '村はずれの洞窟',
+      floors: 10,
+      enemyStart: [3, 5],   // 階に着いたときの敵の数（最小, 最大）
+      enemyMax: 8,          // 1つの階にいられる敵の最大数
+      spawnEvery: 40,       // 何ターンごとに敵が1体湧くか
+      // 出現する敵：from〜to階に、weightの比率で出る
+      spawnTable: [
+        { id: 'slime',  from: 1, to: 5,  weight: 5 },
+        { id: 'bat',    from: 2, to: 10, weight: 3 },
+        { id: 'kobold', from: 3, to: 10, weight: 4 },
+        { id: 'goblin', from: 6, to: 10, weight: 3 },
+      ],
+    },
+  },
+
+  // 敵が主人公に気づく条件
+  ai: {
+    sightRange: 2,      // 通路では、この距離（マス）以内にいると気づく
+    alertTurns: 10,     // 見失っても、このターン数は最後に見た場所を追いかける
   },
 
   // 色（仮素材）
@@ -48,7 +89,12 @@ const DATA = {
     face: '#f1d2b6',
     target: 'rgba(255,255,255,0.6)',
     targetTurn: 'rgba(255,215,90,0.85)',
+    targetAttack: 'rgba(255,90,90,0.9)',
     miniRoom: '#b9a58c',
     miniCorridor: '#8c7b68',
+    miniEnemy: '#ff9a3c',
+    dmgToEnemy: '#ffffff',
+    dmgToPlayer: '#ff6b6b',
+    heal: '#7dff9a',
   },
 };
