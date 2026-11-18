@@ -51,6 +51,54 @@ const DATA = {
     goblin: { name: 'ゴブリン', symbol: 'ゴ', color: '#3f7f7a', hp: 16, atk: 5, def: 2, exp: 12, hitRate: 0.88, move: 'chase' },
   },
 
+  // アイテムの定義
+  // cat（種類）: weapon=武器 / shield=盾 / herb=草 / scroll=巻物 / throw=投げ物
+  // 草と巻物は、迷宮に入るたびに見た目がシャッフルされる（未識別）
+  items: {
+    sword_copper: { name: '銅の剣', cat: 'weapon', atk: 3, desc: '攻撃力+3' },
+    sword_iron:   { name: '鉄の剣', cat: 'weapon', atk: 6, desc: '攻撃力+6' },
+    shield_wood:  { name: '木の盾', cat: 'shield', def: 2, desc: '防御力+2' },
+    shield_iron:  { name: '鉄の盾', cat: 'shield', def: 4, desc: '防御力+4' },
+
+    herb_heal:   { name: '回復草',     cat: 'herb', heal: 25, maxUp: 1, desc: 'HPを25回復。満タンなら最大HP+1' },
+    herb_heal2:  { name: '特製回復草', cat: 'herb', heal: 60, maxUp: 2, desc: 'HPを60回復。満タンなら最大HP+2' },
+    herb_poison: { name: '毒草',       cat: 'herb', damage: 5, atkDown: 1, desc: 'HPが5減り、力が1下がる' },
+    herb_power:  { name: '力の草',     cat: 'herb', atkUp: 1, desc: '力が1上がる' },
+    herb_happy:  { name: '幸せの草',   cat: 'herb', levelUp: 1, desc: 'レベルが1上がる' },
+
+    scroll_identify: { name: '識別の巻物',   cat: 'scroll', effect: 'identify', desc: '持ち物を1つ識別する' },
+    scroll_map:      { name: '地図の巻物',   cat: 'scroll', effect: 'map',      desc: 'この階の地形と階段が分かる' },
+    scroll_sleep:    { name: '眠りの巻物',   cat: 'scroll', effect: 'sleep',    desc: '見えている敵を眠らせる' },
+    scroll_hide:     { name: '隠れ身の巻物', cat: 'scroll', effect: 'hide',     desc: 'しばらく敵に見つからなくなる' },
+
+    stone: { name: '投げ石', cat: 'throw', throwDmg: 6, desc: '投げると6前後のダメージ' },
+  },
+
+  // 種類ごとの表示（仮素材）
+  itemCats: {
+    weapon: { label: '武器',   symbol: '剣', color: '#b9b9c8' },
+    shield: { label: '盾',     symbol: '盾', color: '#a98a5a' },
+    herb:   { label: '草',     symbol: '草', color: '#5fbf6a' },
+    scroll: { label: '巻物',   symbol: '巻', color: '#e8dca8' },
+    throw:  { label: '投げ物', symbol: '石', color: '#9a9a9a' },
+  },
+
+  // 未識別のときの呼び名（種類の数より多めに用意しておく）
+  unknownNames: {
+    herb:   ['青い草', '赤い草', '黄色い草', '白い草', '紫の草', '黒い草', 'まだらの草'],
+    scroll: ['ゆらめく巻物', 'かすれた巻物', '焦げた巻物', '光る巻物', '湿った巻物', '古びた巻物'],
+  },
+
+  bag: {
+    size: 12,          // 持てるアイテムの数
+    throwRange: 10,    // 投げたアイテムが飛ぶ最大距離（マス）
+    throwBaseDmg: 1,   // 投げ物以外を投げたときのダメージ
+  },
+  effects: {
+    sleepTurns: 10,    // 眠りの巻物で眠るターン数
+    hideTurns: 15,     // 隠れ身の巻物の効果ターン数
+  },
+
   // 迷宮の定義
   dungeons: {
     cave: {
@@ -65,6 +113,25 @@ const DATA = {
         { id: 'bat',    from: 2, to: 10, weight: 3 },
         { id: 'kobold', from: 3, to: 10, weight: 4 },
         { id: 'goblin', from: 6, to: 10, weight: 3 },
+      ],
+      // 未識別の有無。本番の洞窟は「未識別なし（true）」の予定。試作では確認のため false
+      identifyAll: false,
+      itemStart: [4, 7],    // 階に落ちているアイテムの数（最小, 最大）
+      itemTable: [
+        { id: 'herb_heal',       from: 1, to: 10, weight: 10 },
+        { id: 'herb_heal2',      from: 3, to: 10, weight: 3 },
+        { id: 'herb_poison',     from: 1, to: 10, weight: 4 },
+        { id: 'herb_power',      from: 1, to: 10, weight: 2 },
+        { id: 'herb_happy',      from: 2, to: 10, weight: 1 },
+        { id: 'scroll_identify', from: 1, to: 10, weight: 4 },
+        { id: 'scroll_map',      from: 1, to: 10, weight: 3 },
+        { id: 'scroll_sleep',    from: 2, to: 10, weight: 3 },
+        { id: 'scroll_hide',     from: 2, to: 10, weight: 2 },
+        { id: 'stone',           from: 1, to: 10, weight: 5 },
+        { id: 'sword_copper',    from: 1, to: 6,  weight: 2 },
+        { id: 'sword_iron',      from: 5, to: 10, weight: 1 },
+        { id: 'shield_wood',     from: 1, to: 6,  weight: 2 },
+        { id: 'shield_iron',     from: 5, to: 10, weight: 1 },
       ],
     },
   },
@@ -93,6 +160,7 @@ const DATA = {
     miniRoom: '#b9a58c',
     miniCorridor: '#8c7b68',
     miniEnemy: '#ff9a3c',
+    miniItem: '#7fd0ff',
     dmgToEnemy: '#ffffff',
     dmgToPlayer: '#ff6b6b',
     heal: '#7dff9a',
