@@ -3,6 +3,8 @@
 // 数値の調整は基本的にこのファイルだけで行う
 // ============================================================
 const DATA = {
+  version: '5.0',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
+
   // マップ生成の設定
   map: {
     width: 48,       // マップ全体の横マス数（gridXで割り切れる数にする）
@@ -23,10 +25,11 @@ const DATA = {
       up:   'img/hero_up.png',
       side: 'img/hero_side.png',
       diag: 'img/hero_diag.png',
+      updiag: 'img/hero_updiag.png', // 斜め上（左上向き。右上は左右反転）
       size: 1.2,     // 1マスに対する絵の大きさ
-      hop: 0.12,     // 歩いたときに跳ねる高さ（1マスに対する割合）
+      hop: 0,        // 歩いたときに跳ねる高さ（1マスに対する割合）。0で跳ねない（よちよち歩き）
       tilt: 0.12,    // 歩いたときに左右に傾く角度（0.12で約7度）。1歩ごとに左右が入れ替わる
-      stretch: 0.08, // 跳ねたときに縦に伸びる量（0.08で8%）
+      stretch: 0.08, // 歩いたときに縦に伸びる量（0.08で8%）
     },
   },
 
@@ -101,37 +104,41 @@ const DATA = {
   // アイテムの定義
   // cat（種類）: weapon=武器 / shield=盾 / herb=草 / scroll=巻物 / throw=投げ物
   // 草と巻物は、迷宮に入るたびに見た目がシャッフルされる（未識別）
+  // price: 基準の値段（道具屋で売ると sellRate 倍。投げ石は1個あたり）
   items: {
-    sword_copper: { name: '銅の剣', cat: 'weapon', atk: 3, desc: '攻撃力+3' },
-    sword_iron:   { name: '鉄の剣', cat: 'weapon', atk: 6, desc: '攻撃力+6' },
-    shield_wood:  { name: '木の盾', cat: 'shield', def: 2, desc: '防御力+2' },
-    shield_iron:  { name: '鉄の盾', cat: 'shield', def: 4, desc: '防御力+4' },
+    sword_copper: { name: '銅の剣', price: 100, cat: 'weapon', atk: 3, desc: '攻撃力+3' },
+    sword_iron:   { name: '鉄の剣', price: 300, cat: 'weapon', atk: 6, desc: '攻撃力+6' },
+    shield_wood:  { name: '木の盾', price: 100, cat: 'shield', def: 2, desc: '防御力+2' },
+    shield_iron:  { name: '鉄の盾', price: 300, cat: 'shield', def: 4, desc: '防御力+4' },
 
-    herb_heal:   { name: '回復草',     cat: 'herb', heal: 25, maxUp: 1, desc: 'HPを25回復。満タンなら最大HP+1' },
-    herb_heal2:  { name: '特製回復草', cat: 'herb', heal: 60, maxUp: 2, desc: 'HPを60回復。満タンなら最大HP+2' },
-    herb_poison: { name: '毒草',       cat: 'herb', damage: 5, atkDown: 1, desc: 'HPが5減り、力が1下がる' },
-    herb_power:  { name: '力の草',     cat: 'herb', atkUp: 1, desc: '力が1上がる' },
-    herb_happy:  { name: '幸せの草',   cat: 'herb', levelUp: 1, desc: 'レベルが1上がる' },
+    herb_heal:   { name: '回復草', price: 50,     cat: 'herb', heal: 25, maxUp: 1, desc: 'HPを25回復。満タンなら最大HP+1' },
+    herb_heal2:  { name: '特製回復草', price: 150, cat: 'herb', heal: 60, maxUp: 2, desc: 'HPを60回復。満タンなら最大HP+2' },
+    herb_poison: { name: '毒草', price: 20,       cat: 'herb', damage: 5, atkDown: 1, desc: 'HPが5減り、力が1下がる' },
+    herb_power:  { name: '力の草', price: 200,     cat: 'herb', atkUp: 1, desc: '力が1上がる' },
+    herb_happy:  { name: '幸せの草', price: 300,   cat: 'herb', levelUp: 1, desc: 'レベルが1上がる' },
 
-    scroll_identify: { name: '識別の巻物',   cat: 'scroll', effect: 'identify', desc: '持ち物を1つ識別する' },
-    scroll_map:      { name: '地図の巻物',   cat: 'scroll', effect: 'map',      desc: 'この階の地形と階段が分かる' },
-    scroll_sleep:    { name: '眠りの巻物',   cat: 'scroll', effect: 'sleep',    desc: '見えている敵を眠らせる' },
-    scroll_hide:     { name: '隠れ身の巻物', cat: 'scroll', effect: 'hide',     desc: 'しばらく敵に見つからなくなる' },
-    scroll_return:   { name: '帰還の巻物',   cat: 'scroll', effect: 'return',   desc: 'その場から地上へ生還する' },
+    scroll_identify: { name: '識別の巻物', price: 100,   cat: 'scroll', effect: 'identify', desc: '持ち物を1つ識別する' },
+    scroll_map:      { name: '地図の巻物', price: 80,   cat: 'scroll', effect: 'map',      desc: 'この階の地形と階段が分かる' },
+    scroll_sleep:    { name: '眠りの巻物', price: 120,   cat: 'scroll', effect: 'sleep',    desc: '見えている敵を眠らせる' },
+    scroll_hide:     { name: '隠れ身の巻物', price: 120, cat: 'scroll', effect: 'hide',     desc: 'しばらく敵に見つからなくなる' },
+    scroll_return:   { name: '帰還の巻物', price: 300,   cat: 'scroll', effect: 'return',   desc: 'その場から地上へ生還する' },
 
     // 時計を戻すアイテム（満腹度でいうパン）
-    sand_small:   { name: '時の砂',           cat: 'time', rewind: 120, desc: '時計を2時間戻す' },
-    sand_big:     { name: '大きな砂時計',     cat: 'time', resetStart: true, desc: '時計を朝9:00まで戻す' },
-    sand_cracked: { name: 'ひび割れた砂時計', cat: 'time', rewind: 120, damage: 6, desc: '時計を2時間戻すが、HPが6減る' },
+    sand_small:   { name: '時の砂', price: 80,           cat: 'time', rewind: 120, desc: '時計を2時間戻す' },
+    sand_big:     { name: '大きな砂時計', price: 250,     cat: 'time', resetStart: true, desc: '時計を朝9:00まで戻す' },
+    sand_cracked: { name: 'ひび割れた砂時計', price: 40, cat: 'time', rewind: 120, damage: 6, desc: '時計を2時間戻すが、HPが6減る' },
 
     // 回復を早めるアイテム
-    energy: { name: 'エナジードリンク', cat: 'drink', boostTurns: 30, desc: '30ターンの間、自然回復が2倍。残業中も回復する' },
+    energy: { name: 'エナジードリンク', price: 60, cat: 'drink', boostTurns: 30, desc: '30ターンの間、自然回復が2倍。残業中も回復する' },
 
     // 帰還の糸：拾うと糸が1本増える（持ち物には入らない）。使うときは広告が必要
     thread: { name: '帰還の糸', cat: 'thread', desc: '拾うと帰還の糸が1本増える' },
 
     // stack: 束で落ちている数（最小, 最大）。同じものは1枠にまとめて持てる
-    stone: { name: '投げ石', cat: 'throw', throwDmg: 6, stack: [3, 6], desc: '投げると6前後のダメージ。装備すると「投げる」ボタンで投げられる' },
+    stone: { name: '投げ石', price: 6, cat: 'throw', throwDmg: 6, stack: [3, 6], desc: '投げると6前後のダメージ。装備すると「投げる」ボタンで投げられる' },
+
+    // トニー（お金）：床に落ちている。持ち物には入らない
+    tony: { name: 'トニー', cat: 'tony', desc: '村で使えるお金' },
   },
 
   // 種類ごとの表示（仮素材）
@@ -144,6 +151,7 @@ const DATA = {
     time:   { label: '砂時計', symbol: '砂', color: '#d9b46a' },
     drink:  { label: '飲み物', symbol: '飲', color: '#6ab0d9' },
     thread: { label: '糸',     symbol: '糸', color: '#d4485f' },
+    tony:   { label: 'トニー', symbol: 'ト', color: '#f2c94c' },
   },
 
   // 未識別のときの呼び名（種類の数より多めに用意しておく）
@@ -206,6 +214,44 @@ const DATA = {
     },
   },
 
+  // トニー（お金）
+  tony: {
+    piles: [1, 2],      // 1つの階に落ちている山の数（最小, 最大）
+    amount: [10, 30],   // 1つの山の額（最小, 最大）。これに階数を掛ける
+    // 生還したときの倍率（帰った時刻で変わる）。力尽きたら0（全部失う）
+    mult: { ontime: 1.5, overtime: 1.0, late: 0.7 },
+  },
+
+  // 村
+  village: {
+    name: 'はじまりの村',
+    storageSize: 100,   // 倉庫に入る数（あふれた分は自動で売る）
+    sellRate: 0.5,      // 売るときの値段（price に対する割合）
+    unknownSell: 10,    // 正体不明のアイテムを売るときの値段
+    appraiseCost: 30,   // 鑑定屋の料金（1個）
+    // 村の復興（順番に寄付していく）
+    revival: [
+      { cost: 300,  text: '道具屋が開店する' },
+      { cost: 1000, text: '鑑定屋と鍛冶屋が開店する' },
+    ],
+    // 施設（need = 必要な復興段階）
+    facilities: [
+      { key: 'shrine',    name: 'アリアの祠', icon: '⛩️', need: 0 },
+      { key: 'storage',   name: '倉庫',       icon: '📦', need: 0 },
+      { key: 'shop',      name: '道具屋',     icon: '🛒', need: 1 },
+      { key: 'appraiser', name: '鑑定屋',     icon: '🔍', need: 2 },
+      { key: 'smith',     name: '鍛冶屋',     icon: '🔨', need: 2 },
+    ],
+    // 道具屋の品ぞろえ（count = 束の数）
+    shop: [
+      { id: 'herb_heal',       price: 50 },
+      { id: 'sand_small',      price: 80 },
+      { id: 'energy',          price: 60 },
+      { id: 'stone',           price: 30, count: 5 },
+      { id: 'scroll_identify', price: 100 },
+    ],
+  },
+
   // 敵が主人公に気づく条件
   ai: {
     sightRange: 2,      // 通路では、この距離（マス）以内にいると気づく
@@ -220,6 +266,8 @@ const DATA = {
     ontime: 'えっ、今日は早いですね！　おかえりなさい！',
     overtime: 'おかえりなさい。今日も遅くまでお疲れさまでした。',
     late: '……おかえりなさい。もう朝ですよ。',
+    shrine: 'いってらっしゃい。今日こそ定時で帰ってきてくださいね。',
+    relic: '……ひとつだけなら、拾ってこられそうです。どれにしますか？',
   },
 
   colors: {
