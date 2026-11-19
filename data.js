@@ -25,6 +25,8 @@ const DATA = {
       diag: 'img/hero_diag.png',
       size: 1.2,     // 1マスに対する絵の大きさ
       hop: 0.12,     // 歩いたときに跳ねる高さ（1マスに対する割合）
+      tilt: 0.12,    // 歩いたときに左右に傾く角度（0.12で約7度）。1歩ごとに左右が入れ替わる
+      stretch: 0.08, // 跳ねたときに縦に伸びる量（0.08で8%）
     },
   },
 
@@ -97,7 +99,7 @@ const DATA = {
   },
 
   // アイテムの定義
-  // cat（種類）: weapon=武器 / shield=盾 / herb=草 / scroll=巻物 / throw=投げ物 / time=砂時計 / drink=飲み物
+  // cat（種類）: weapon=武器 / shield=盾 / herb=草 / scroll=巻物 / throw=投げ物
   // 草と巻物は、迷宮に入るたびに見た目がシャッフルされる（未識別）
   items: {
     sword_copper: { name: '銅の剣', cat: 'weapon', atk: 3, desc: '攻撃力+3' },
@@ -210,6 +212,7 @@ const DATA = {
     alertTurns: 10,     // 見失っても、このターン数は最後に見た場所を追いかける
   },
 
+  // 色（仮素材）
   // アリアのセリフ（帰還の糸を使うとき）
   aria: {
     thread: 'もう、仕方ないですね……祈りますから、ちゃんと帰ってきてくださいよ。',
