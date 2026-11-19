@@ -73,6 +73,12 @@ html, body {
 #clock { font-weight: bold; font-size: 16px; font-variant-numeric: tabular-nums; }
 #clock.overtime { color: #ff9a3c; }
 #clock.late { color: #ff5a5a; }
+/* 24:00以降：1ターンごとに点滅させる */
+#clock.blink { animation: clock-blink 0.5s ease-out; }
+@keyframes clock-blink {
+  0%   { opacity: 0.1; }
+  100% { opacity: 1; }
+}
 #cond { margin-right: 6px; font-size: 13px; }
 
 /* ---- マップ ---- */
