@@ -3,7 +3,7 @@
 // 数値の調整は基本的にこのファイルだけで行う
 // ============================================================
 const DATA = {
-  version: '7.1',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
+  version: '7.2',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
 
   // テスト用（本番では false にする）
   debug: {
@@ -457,6 +457,25 @@ const DATA = {
       name: '帰らずの迷宮',
       locked: true,
     },
+  },
+
+  // タイトル画面
+  // cast: 背景に並べるキャラクター（x, y = 足元の位置。画面の左上からの％、size = 画面の横幅に対する大きさ％）
+  //   sprite: 敵の絵の名前（img/enemy_○○.png）、hero: true で主人公。tint で色違い、flip で左右反転
+  //   idle: 待機中の動き（breathe / slow / sway / float / jitter）
+  title: {
+    logo: 'img/title_logo.png',
+    cast: [
+      { sprite: 'otsubone',  x: 13, y: 56, size: 31, idle: 'breathe', flip: true },
+      { sprite: 'amakudari', x: 86, y: 52, size: 30, idle: 'float' },
+      { sprite: 'nabakari',  x: 35, y: 58, size: 28, idle: 'sway', flip: true },
+      { sprite: 'sontaku',   x: 65, y: 58, size: 28, idle: 'sway' },
+      { sprite: 'madogiwa',  x: 19, y: 75, size: 33, idle: 'slow', flip: true },
+      { sprite: 'nemawashi', x: 81, y: 73, size: 31, idle: 'breathe' },
+      { sprite: 'sabizan',   x: 13, y: 92, size: 33, idle: 'jitter', flip: true },
+      { sprite: 'marunage',  x: 87, y: 91, size: 33, idle: 'sway' },
+      { hero: true,          x: 50, y: 85, size: 50, idle: 'breathe' },
+    ],
   },
 
   // 祠に並べる迷宮の順番
