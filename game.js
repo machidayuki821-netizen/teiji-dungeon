@@ -1,8 +1,8 @@
 // ============================================================
-// game.js ― ゲームの仕組み（段階⑥：迷宮を増やす）
+// game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '6.0'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.0'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -102,7 +102,10 @@ function isOccupied(x, y) {
 }
 function floorItemAt(x, y) { return state.floorItems.find((f) => f.x === x && f.y === y) || null; }
 // 操作を受け付けない状態か（メッセージ画面や持ち物画面を開いている）
-function busy() { return state.locked || state.bagOpen || state.inVillage; }
+function busy() {
+  return state.locked || state.bagOpen || state.inVillage ||
+    !!(state.player && state.player.status && state.player.status.sleep > 0);
+}
 
 // ---- アイテム関連の便利関数 ----
 function itemDef(item) { return DATA.items[item.id]; }
@@ -113,9 +116,11 @@ function newItem(id) {
   return item;
 }
 // 表示名（束の数つき）
+// 強化値の表示（+2、-1 など）
+function plusText(plus) { return plus > 0 ? `+${plus}` : plus < 0 ? `${plus}` : ''; }
 function itemLabel(item) {
   if (item.id === 'tony') return `${item.amount}トニー`;
-  return itemName(item) + (item.count ? `（${item.count}）` : '');
+  return itemName(item) + plusText(item.plus || 0) + (item.count ? `（${item.count}）` : '');
 }
 function isKnown(id) {
   const cat = DATA.items[id].cat;
@@ -146,11 +151,56 @@ function clockPhase() {
 // 装備込みの攻撃力・防御力
 function playerAtk() {
   const p = state.player;
-  return p.atk + (p.weapon ? itemDef(p.weapon).atk : 0);
+  if (!p.weapon) return p.atk;
+  const w = itemDef(p.weapon);
+  let atk = p.atk + w.atk + (p.weapon.plus || 0);
+  const overtime = p.clock >= DATA.clock.overtime;
+  if (w.teijiBonus && !overtime) atk += w.teijiBonus;
+  if (w.overtimeBonus && overtime) atk += w.overtimeBonus;
+  return Math.max(0, atk);
 }
 function playerDef() {
   const p = state.player;
-  return p.def + (p.shield ? itemDef(p.shield).def : 0);
+  if (!p.shield) return p.def;
+  return Math.max(0, p.def + itemDef(p.shield).def + (p.shield.plus || 0));
+}
+// 装備中の盾の効果（immune / reflect / regenMul）
+function shieldDef() { const p = state.player; return p.shield ? itemDef(p.shield) : {}; }
+function weaponDef() { const p = state.player; return p.weapon ? itemDef(p.weapon) : {}; }
+
+// ============================================================
+// 状態異常（寝不足・居眠り・電話中）。経費削減は敵がトニーを持っている間だけ表示
+// ============================================================
+function hasStatus(id) { const p = state.player; return !!(p.status && p.status[id] > 0); }
+function applyStatus(id) {
+  const p = state.player;
+  const S = DATA.status[id];
+  if (shieldDef().immune === id) { addLog(`${itemDef(p.shield).name}のおかげで${S.name}にならなかった。`); return; }
+  if ((id === 'confuse' || id === 'sleep') && p.caffeine > 0) { addLog(`缶コーヒーが効いていて、${S.name}にならなかった。`); return; }
+  const was = hasStatus(id);
+  p.status[id] = S.turns;
+  if (!was) {
+    addLog(S.start);
+    addPopup(p.x, p.y, S.icon, '#ffd84a');
+  }
+  updateUI();
+  if (id === 'sleep') setTimeout(sleepTick, 250);
+}
+function cureStatus(id, quiet) {
+  const p = state.player;
+  if (!hasStatus(id)) return false;
+  p.status[id] = 0;
+  if (!quiet) addLog(DATA.status[id].end);
+  return true;
+}
+// 居眠り中は、目が覚めるまで自動でターンが進む
+function sleepTick() {
+  const p = state.player;
+  if (!hasStatus('sleep') || p.hp <= 0 || state.inVillage) return;
+  if (overlayOpen() || state.bagOpen) { setTimeout(sleepTick, 300); return; }
+  addLog('居眠りしている……');
+  endTurn();
+  if (hasStatus('sleep')) setTimeout(sleepTick, 280);
 }
 
 // ============================================================
@@ -362,7 +412,26 @@ function pickEnemyType() {
 }
 
 // 敵を1体出す。avoidRoom の部屋と、主人公から見えている場所には出さない
-function spawnEnemy(avoidRoom) {
+// 途中で湧くとき（periodic）に「降ってくる敵」が選ばれたら、主人公の近くに降らせる
+function spawnEnemy(avoidRoom, periodic) {
+  if (periodic) {
+    const type = pickEnemyType();
+    if (DATA.enemies[type].dropIn) {
+      const p = state.player;
+      const spots = [];
+      for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+        const x = p.x + dx, y = p.y + dy, d = Math.max(Math.abs(dx), Math.abs(dy));
+        if (d >= 2 && walkable(x, y) && !isOccupied(x, y) && !(x === state.stairs.x && y === state.stairs.y)) spots.push([x, y]);
+      }
+      if (spots.length) {
+        const [x, y] = spots[rand(0, spots.length - 1)];
+        const e = addEnemy(type, x, y);
+        e.alert = DATA.ai.alertTurns;
+        addLog(`${DATA.enemies[type].name}が天から降ってきた！`);
+        return;
+      }
+    }
+  }
   const rooms = state.rooms
     .map((r, i) => ({ r, i }))
     .filter(({ r, i }) => !r.dummy && i !== avoidRoom);
@@ -390,6 +459,8 @@ function addEnemy(type, x, y) {
     atk: Math.round(def.atk * (1 + (sc ? sc.atk : 0) * over)),
     exp: Math.round(def.exp * (1 + (sc ? sc.hp : 0) * over)),
     alert: 0, tx: null, ty: null, flash: 0, sleep: 0, summonTimer: 0,
+    dir: 2, hop: 0, armor: def.armor || 0, stolen: 0, buff: 0, stun: 0,
+    home: roomAt(x, y), // 自分の部屋（縄張りの敵用）
   };
   state.enemies.push(e);
   return e;
@@ -446,10 +517,13 @@ function enemyInDir(d) {
 function stepPlayer(d) {
   if (busy()) return false;
   const p = state.player;
+  // 寝不足：半分の確率で違う方向へ
+  if (hasStatus('confuse') && Math.random() < 0.5) d = rand(0, 7);
   p.dir = d;
 
   const target = enemyInDir(d);
   if (target) {
+    if (hasStatus('phone')) { addLog('電話中で手が離せない！'); return false; }
     playerAttack(target);
     endTurn();
     return false; // 攻撃したら連続移動は止める
@@ -517,26 +591,52 @@ function calcDamage(atk, def) {
   return Math.max(1, Math.round(base * (0.88 + Math.random() * 0.24)));
 }
 
+// 敵にダメージを与える。'armor' = 張りぼてが受けた / 'hit' = 当たった / 'dead' = 倒れた
+function hitEnemy(e, dmg) {
+  const def = DATA.enemies[e.type];
+  e.flash = 1;
+  e.sleep = 0; // 攻撃されたら目を覚ます
+  e.alert = DATA.ai.alertTurns;
+  if (e.armor > 0) {
+    e.armor--;
+    addPopup(e.x, e.y, 'ガード', '#ffd84a');
+    if (e.armor === 0) { addLog(`${def.name}の張りぼてがはがれた！`); e.fleeing = true; }
+    else addLog(`${def.name}の張りぼてが攻撃を受け止めた。`);
+    return 'armor';
+  }
+  e.hp -= dmg;
+  addPopup(e.x, e.y, String(dmg), DATA.colors.dmgToEnemy);
+  if (e.hp <= 0) {
+    if (def.lastStand && !e.lastUsed) {
+      e.lastUsed = true;
+      e.hp = 1;
+      e.doomed = true;
+      addLog(`${def.name}は倒れない……最後のひと仕事だ！`);
+      return 'hit';
+    }
+    return 'dead';
+  }
+  return 'hit';
+}
+
 function playerAttack(e) {
   const p = state.player;
   const def = DATA.enemies[e.type];
+  const w = weaponDef();
   p.lunge = 1;
-  if (Math.random() > DATA.player.hitRate) {
+  if (Math.random() > DATA.player.hitRate + (w.hitMod || 0)) {
     addLog(`${def.name}への攻撃は外れた。`);
     addPopup(e.x, e.y, 'ミス', DATA.colors.dmgToEnemy);
     return;
   }
   const dmg = calcDamage(playerAtk(), def.def);
-  e.hp -= dmg;
-  e.flash = 1;
-  e.sleep = 0; // 攻撃されたら目を覚ます
-  e.alert = DATA.ai.alertTurns;
-  addPopup(e.x, e.y, String(dmg), DATA.colors.dmgToEnemy);
-  if (e.hp <= 0) {
+  const r = hitEnemy(e, dmg);
+  if (r === 'dead') {
     addLog(`${def.name}をたおした。経験値${e.exp || def.exp}`);
     killEnemy(e);
-  } else {
-    addLog(`${def.name}に${dmg}のダメージ。`);
+  } else if (r === 'hit') {
+    if (!e.doomed) addLog(`${def.name}に${dmg}のダメージ。`);
+    if (w.stun) { e.stun = w.stun; addLog(`${def.name}はハンコを押されて動けない！`); }
   }
 }
 
@@ -545,6 +645,16 @@ function killEnemy(e) {
   const def = DATA.enemies[e.type];
   state.enemies = state.enemies.filter((x) => x !== e);
   gainExp(e.exp || def.exp);
+  // 盗まれたトニーと、敵が持っていたトニー
+  let tony = e.stolen || 0;
+  if (def.tonyDrop) tony += rand(def.tonyDrop[0], def.tonyDrop[1]) * state.floor;
+  const w = weaponDef();
+  if (w.tonyOnKill) tony += rand(w.tonyOnKill[0], w.tonyOnKill[1]);
+  if (tony > 0) {
+    state.runTony += tony;
+    addLog(e.stolen ? `取られたトニーを取り返した！（${tony}トニー）` : `${tony}トニーを手に入れた。`);
+    addPopup(e.x, e.y, `+${tony}ト`, '#f2c94c');
+  }
   if (!def.boss) { dropLoot(e); return; }
   // ボスのごほうび
   const R = def.reward;
@@ -579,8 +689,10 @@ function doAction() {
   if (overlayOpen()) { pressOvSel(); return; }
   if (busy()) return;
   const p = state.player;
+  if (hasStatus('confuse') && enemyInDir(p.dir) === null && Math.random() < 0.5) p.dir = rand(0, 7);
   const target = enemyInDir(p.dir);
   if (target) {
+    if (hasStatus('phone')) { addLog('電話中で手が離せない！'); return; }
     playerAttack(target);
     endTurn();
   } else if (onStairs()) {
@@ -613,6 +725,15 @@ function endTurn() {
   if (before < C.overtime && p.clock >= C.overtime) showNotice('overtime');
   if (before < C.lastTrain && p.clock >= C.lastTrain) showNotice('lastTrain');
 
+  // 状態異常の残りターン
+  for (const id of Object.keys(p.status)) {
+    if (p.status[id] > 0) {
+      p.status[id]--;
+      if (p.status[id] === 0) addLog(DATA.status[id].end);
+    }
+  }
+  if (p.caffeine > 0) p.caffeine--;
+
   // エナジードリンクの効果時間
   if (p.boost > 0) {
     p.boost--;
@@ -624,6 +745,7 @@ function endTurn() {
   const phase = clockPhase();
   let rate = phase === 'work' ? 1 : phase === 'overtime' ? C.overtimeRegen : 0;
   if (p.boost > 0) rate = (rate || C.overtimeRegen) * 2;
+  rate *= shieldDef().regenMul || 1;
   if (rate > 0 && p.hp < p.maxHp) {
     p.regen += p.maxHp * DATA.player.regenRate * rate;
     if (p.regen >= 1) {
@@ -651,7 +773,7 @@ function endTurn() {
   // 敵の出現
   const dungeon = DATA.dungeons[state.dungeonId];
   if (state.turn % dungeon.spawnEvery === 0 && state.enemies.length < dungeon.enemyMax) {
-    spawnEnemy(roomAt(p.x, p.y));
+    spawnEnemy(roomAt(p.x, p.y), true);
   }
 
   updateVisibility();
@@ -672,21 +794,95 @@ function enemyCanSeePlayer(e) {
 }
 
 function enemyAct(e) {
+  const fx = e.x, fy = e.y;
+  enemyActInner(e);
+  if (e.x !== fx || e.y !== fy) { e.dir = dirTo(fx, fy, e.x, e.y); e.hop = 1; }
+  // 最後のひと仕事を終えた敵は倒れる
+  if (e.doomed && state.enemies.includes(e)) {
+    addLog(`${DATA.enemies[e.type].name}は力尽きた。経験値${e.exp}`);
+    killEnemy(e);
+  }
+}
+
+function enemyActInner(e) {
   const def = DATA.enemies[e.type];
   const p = state.player;
+  if (e.buff > 0) e.buff--;
 
-  // 眠っている敵は動かない
+  // 眠っている敵・止められた敵は動かない
   if (e.sleep > 0) {
     e.sleep--;
     return;
   }
+  if (e.stun > 0) {
+    e.stun--;
+    return;
+  }
 
   // 主人公に気づいているか
+  const wasAlert = e.alert > 0;
   if (enemyCanSeePlayer(e)) {
     e.alert = DATA.ai.alertTurns;
     e.tx = p.x; e.ty = p.y;
   } else if (e.alert > 0) {
     e.alert--;
+  }
+
+  // 根回し：気づいたら、階じゅうの敵に居場所を知らせる（1回だけ）
+  if (def.rumor && !wasAlert && e.alert > 0 && !e.rumored) {
+    e.rumored = true;
+    for (const o of state.enemies) {
+      if (o === e) continue;
+      o.alert = DATA.ai.alertTurns * 2;
+      o.tx = p.x; o.ty = p.y;
+      if (def.rumorBuff) o.buff = def.rumorBuff;
+    }
+    addLog(`${def.name}が根回しをした！　階じゅうの魔物が集まってくる……`);
+    return;
+  }
+
+  // 近くにいるだけでかかる状態異常（ぽかぽか・小言）
+  if (def.aura && e.alert > 0 && dist(e.x, e.y, p.x, p.y) <= def.aura.range &&
+      (dist(e.x, e.y, p.x, p.y) <= 1 || state.visible[idx(e.x, e.y)]) && !hasStatus(def.aura.status) &&
+      Math.random() < def.aura.chance) {
+    addLog(def.aura.text);
+    applyStatus(def.aura.status);
+    return;
+  }
+
+  // 離れた所からの攻撃（書類を投げる）
+  if (def.ranged && e.alert > 0 && dist(e.x, e.y, p.x, p.y) > 1 && Math.random() < def.ranged.chance && clearLine(e, p, def.ranged.range)) {
+    e.dir = dirTo(e.x, e.y, p.x, p.y);
+    e.lunge = 1; e.lungeDir = e.dir;
+    for (let i = 0; i < def.ranged.times && p.hp > 0 && state.enemies.includes(e); i++) {
+      addLog(`${def.name}は${def.ranged.text}！`);
+      if (Math.random() > def.hitRate) { addLog('当たらなかった。'); continue; }
+      const sd = shieldDef();
+      if (sd.reflect && Math.random() < sd.reflect) {
+        const dmg = calcDamage(enemyAtk(e), def.def);
+        addLog(`${itemDef(p.shield).name}で跳ね返した！`);
+        if (hitEnemy(e, dmg) === 'dead') { addLog(`${def.name}をたおした。経験値${e.exp}`); killEnemy(e); }
+        continue;
+      }
+      const dmg = calcDamage(enemyAtk(e), playerDef());
+      damagePlayer(dmg, def.name);
+    }
+    return;
+  }
+
+  // 動かない敵：隣にいれば、ときどき攻撃するだけ
+  if (def.move === 'still') {
+    if (e.alert > 0 && dist(e.x, e.y, p.x, p.y) === 1 && Math.random() < (def.attackRate || 1)) {
+      const d = dirTo(e.x, e.y, p.x, p.y);
+      if (canMove(e.x, e.y, d)) { e.dir = d; enemyAttack(e); }
+    }
+    return;
+  }
+
+  // 逃げる敵（張りぼてがはがれた・トニーを盗んだ）、近づかれると離れる敵
+  const near = dist(e.x, e.y, p.x, p.y);
+  if ((e.fleeing && e.alert > 0) || (def.move === 'keepAway' && e.alert > 0 && near <= 2 && near > 1)) {
+    if (fleeStep(e)) return;
   }
 
   // 手下を呼ぶ（ボス）
@@ -722,7 +918,13 @@ function enemyAct(e) {
   // 隣にいれば攻撃
   if (e.alert > 0 && dist(e.x, e.y, p.x, p.y) === 1) {
     const d = dirTo(e.x, e.y, p.x, p.y);
-    if (canMove(e.x, e.y, d)) { enemyAttack(e); return; }
+    if (canMove(e.x, e.y, d)) { e.dir = d; enemyAttack(e); return; }
+  }
+
+  // 背中側に回り込む敵：主人公の後ろのマスを目指す
+  if (def.move === 'flank' && e.alert > 0) {
+    const bx = p.x - DIRS[p.dir][0], by = p.y - DIRS[p.dir][1];
+    if (walkable(bx, by) && !isOccupied(bx, by)) { e.tx = bx; e.ty = by; }
   }
 
   // 目的地を決める（気づいていれば主人公、そうでなければ適当な部屋）
@@ -741,8 +943,44 @@ function enemyAct(e) {
     if (e.alert <= 0) e.tx = null; // 行けないなら目的地を決め直す
     return;
   }
+  // 縄張りの敵は、自分の部屋から出ない
+  if (def.move === 'territory' && e.home !== -1 && roomAt(e.x + DIRS[d][0], e.y + DIRS[d][1]) !== e.home) {
+    e.tx = null;
+    return;
+  }
   e.x += DIRS[d][0];
   e.y += DIRS[d][1];
+}
+
+// 主人公から離れる方向へ1歩。動けたら true
+function fleeStep(e) {
+  const p = state.player;
+  let best = null, bestD = dist(e.x, e.y, p.x, p.y);
+  for (let d = 0; d < 8; d++) {
+    const nx = e.x + DIRS[d][0], ny = e.y + DIRS[d][1];
+    if (!canMove(e.x, e.y, d) || isOccupied(nx, ny)) continue;
+    const nd = dist(nx, ny, p.x, p.y);
+    if (nd > bestD) { bestD = nd; best = d; }
+  }
+  if (best === null) return false;
+  e.x += DIRS[best][0];
+  e.y += DIRS[best][1];
+  return true;
+}
+
+// 敵から主人公まで、まっすぐ（8方向）でさえぎる物がないか
+function clearLine(e, p, range) {
+  const dx = p.x - e.x, dy = p.y - e.y;
+  if (!(dx === 0 || dy === 0 || Math.abs(dx) === Math.abs(dy))) return false;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) > range) return false;
+  const d = dirTo(e.x, e.y, p.x, p.y);
+  let x = e.x, y = e.y;
+  while (true) {
+    if (!canMove(x, y, d)) return false;
+    x += DIRS[d][0]; y += DIRS[d][1];
+    if (x === p.x && y === p.y) return true;
+    if (enemyAt(x, y)) return false;
+  }
 }
 
 // 目的地までの最短ルートの1歩目を探す（他の敵と主人公は通れない）
@@ -788,12 +1026,68 @@ function enemyAttack(e) {
     addPopup(p.x, p.y, 'ミス', DATA.colors.dmgToPlayer);
     return;
   }
-  const dmg = calcDamage(e.atk || def.atk, playerDef());
+  const dmg = calcDamage(enemyAtk(e), playerDef());
+  damagePlayer(dmg, def.name);
+  addLog(`${def.name}の攻撃。${dmg}のダメージ。`);
+  if (p.hp > 0) applyOnHit(e);
+}
+
+// 敵の攻撃力（残業時間・ネマワシ専務の強化・ソンタク秘書のそば）
+function enemyAtk(e) {
+  const def = DATA.enemies[e.type];
+  let atk = e.atk || def.atk;
+  if (def.overtimeAtk && state.player.clock >= DATA.clock.overtime) atk = Math.round(atk * def.overtimeAtk);
+  if (e.buff > 0) atk += 2;
+  for (const o of state.enemies) {
+    const od = DATA.enemies[o.type];
+    if (o !== e && od.buffAura && dist(o.x, o.y, e.x, e.y) <= od.buffAura.range) atk += od.buffAura.atk;
+  }
+  return atk;
+}
+
+function damagePlayer(dmg, who) {
+  const p = state.player;
   p.hp = Math.max(0, p.hp - dmg);
-  if (p.hp <= 0) state.deathCause = `${def.name}にやられた`;
+  if (p.hp <= 0) state.deathCause = `${who}にやられた`;
   p.hurt = 1;
   addPopup(p.x, p.y, String(dmg), DATA.colors.dmgToPlayer);
-  addLog(`${def.name}の攻撃。${dmg}のダメージ。`);
+}
+
+// 攻撃が当たったときの追加効果
+function applyOnHit(e) {
+  const def = DATA.enemies[e.type];
+  const h = def.onHit;
+  const p = state.player;
+  if (!h || Math.random() >= h.rate) return;
+  if (h.status) applyStatus(h.status);
+  if (h.rust && p.weapon) {
+    if (weaponDef().noRust) addLog(`${itemDef(p.weapon).name}は錆びなかった。`);
+    else {
+      p.weapon.plus = Math.max(DATA.smith.min, (p.weapon.plus || 0) - h.rust);
+      addLog(`${itemDef(p.weapon).name}が錆びてしまった！（${itemLabel(p.weapon)}）`);
+    }
+  }
+  if (h.steal && state.runTony > 0) {
+    if (shieldDef().immune === 'theft') { addLog('アタッシュケースがトニーを守った！'); return; }
+    const amount = Math.max(1, Math.floor(state.runTony * h.steal));
+    state.runTony -= amount;
+    e.stolen += amount;
+    e.fleeing = true;
+    addLog(`経費削減！　${def.name}に${amount}トニーを持っていかれた！`);
+    // 遠くへ飛んでいく
+    const spots = [];
+    for (const r of state.rooms) {
+      if (r.dummy) continue;
+      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) {
+        if (!isOccupied(x, y) && dist(x, y, p.x, p.y) >= 8) spots.push([x, y]);
+      }
+    }
+    if (spots.length) {
+      const [x, y] = spots[rand(0, spots.length - 1)];
+      e.x = e.rx = x; e.y = e.ry = y;
+      addLog(`${def.name}は傘を広げて飛んでいった。`);
+    }
+  }
 }
 
 // ============================================================
@@ -849,6 +1143,8 @@ function createPlayer() {
     clock: DATA.clock.start,    // 現在時刻（0時からの分）
     boost: 0,                   // エナジードリンクの残りターン
     threads: DATA.dungeons[state.dungeonId].threads, // 帰還の糸の残り本数
+    status: { confuse: 0, sleep: 0, phone: 0 }, // 状態異常の残りターン
+    caffeine: 0,                // 缶コーヒーの効果の残りターン
     hop: 0,                     // 歩いたときに跳ねる動き
     stepSide: 1,                // 歩くときに傾く向き（1 / -1 を交互に）
   };
@@ -874,6 +1170,7 @@ function startDungeon(carried, opts) {
   for (const x of carried || []) {
     const item = { uid: nextItemUid++, id: x.id };
     if (x.count) item.count = x.count;
+    if (x.plus) item.plus = x.plus;
     state.bag.push(item);
     if (!x.unk) state.identified.add(x.id);
   }
@@ -1200,10 +1497,10 @@ function toggleEquip(item) {
   const slot = def.cat === 'weapon' ? 'weapon' : def.cat === 'shield' ? 'shield' : 'quiver';
   if (p[slot] === item) {
     p[slot] = null;
-    addLog(`${def.name}を外した。`);
+    addLog(`${itemLabel(item)}を外した。`);
   } else {
     p[slot] = item;
-    addLog(`${def.name}を装備した。`);
+    addLog(`${itemLabel(item)}を装備した。`);
   }
 }
 
@@ -1217,15 +1514,20 @@ function useItem(item) {
     removeFromBag(item);
     const wasUnknown = identify(item.id);
     addLog(wasUnknown ? `${before}を食べた。これは${def.name}だった！` : `${def.name}を食べた。`);
+    if (def.cureAll) {
+      let any = false;
+      for (const id of Object.keys(p.status)) any = cureStatus(id) || any;
+      if (!any) addLog('体が軽くなった気がする。');
+    }
     if (def.heal) {
-      if (p.hp >= p.maxHp) {
+      if (p.hp >= p.maxHp && def.maxUp) {
         p.maxHp += def.maxUp;
         p.hp = p.maxHp;
         addLog(`最大HPが${def.maxUp}上がった。`);
       } else {
         const heal = Math.min(def.heal, p.maxHp - p.hp);
         p.hp += heal;
-        addPopup(p.x, p.y, `+${heal}`, DATA.colors.heal);
+        if (heal > 0) addPopup(p.x, p.y, `+${heal}`, DATA.colors.heal);
       }
     }
     if (def.damage) {
@@ -1265,6 +1567,28 @@ function useItem(item) {
       p.hidden = DATA.effects.hideTurns;
       state.enemies.forEach((e) => { e.alert = 0; });
       addLog('姿が見えにくくなった。');
+    } else if (def.effect === 'whet') {
+      const target = p.weapon || p.shield;
+      if (!target) addLog('しかし装備がなかった。');
+      else {
+        const cur = target.plus || 0;
+        if (cur >= DATA.smith.max) addLog(`${itemLabel(target)}はこれ以上鍛えられない。`);
+        else { target.plus = cur < 0 ? 0 : cur + 1; addLog(`${itemDef(target).name}が研がれた！（${itemLabel(target)}）`); }
+      }
+    } else if (def.effect === 'broadcast') {
+      const targets = state.enemies.filter((e) => state.visible[idx(e.x, e.y)]);
+      if (!targets.length) addLog('しかし誰も読んでいなかった。');
+      for (const e of targets) {
+        const edef = DATA.enemies[e.type];
+        const dmg = calcDamage(def.power, 0);
+        if (hitEnemy(e, dmg) === 'dead') { addLog(`${edef.name}をたおした。経験値${e.exp}`); killEnemy(e); }
+      }
+      if (targets.length) addLog('一斉送信のメールが魔物たちを襲った！');
+    } else if (def.effect === 'teiji') {
+      if (p.clock > DATA.clock.overtime) {
+        p.clock = def.to;
+        addLog(`時計の針が戻っていく……（${formatClock(p.clock)}）`);
+      } else addLog('まだ定時前だ。何も起こらなかった。');
     } else if (def.effect === 'return') {
       addLog('体が光に包まれた……');
       survive('巻物');
@@ -1301,6 +1625,13 @@ function useItem(item) {
 
   if (def.cat === 'drink') {
     removeFromBag(item);
+    if (def.caffeine) {
+      addLog(`${def.name}を飲んだ。目がさえてきた！`);
+      cureStatus('confuse');
+      cureStatus('sleep');
+      p.caffeine = DATA.caffeineTurns;
+      return true;
+    }
     p.boost = def.boostTurns;
     addLog(`${def.name}を飲んだ。体の奥から力がわいてくる！`);
     return true;
@@ -1344,15 +1675,11 @@ function throwItem(item) {
       const edef = DATA.enemies[e.type];
       const base = def.throwDmg || DATA.bag.throwBaseDmg;
       const dmg = calcDamage(base, 0);
-      e.hp -= dmg;
-      e.flash = 1;
-      e.sleep = 0;
-      e.alert = DATA.ai.alertTurns;
-      addPopup(e.x, e.y, String(dmg), DATA.colors.dmgToEnemy);
-      if (e.hp <= 0) {
+      const r = hitEnemy(e, dmg);
+      if (r === 'dead') {
         addLog(`${name}が${edef.name}に当たった。${edef.name}をたおした。経験値${e.exp || edef.exp}`);
         killEnemy(e);
-      } else {
+      } else if (r === 'hit' && !e.doomed) {
         addLog(`${name}が${edef.name}に当たった。${dmg}のダメージ。`);
       }
       return;
@@ -1385,6 +1712,8 @@ function dropItem(item) {
 function quickThrow() {
   if (busy()) return;
   const p = state.player;
+  if (hasStatus('phone')) { addLog('電話中で手が離せない！'); return; }
+  if (hasStatus('confuse') && Math.random() < 0.5) p.dir = rand(0, 7);
   if (!p.quiver) {
     addLog('投げ物を装備していない。（道具から装備できます）');
     return;
@@ -1481,6 +1810,11 @@ function renderBag() {
 
   const def = itemDef(sel);
   desc.textContent = isKnown(sel.id) ? def.desc : 'まだ正体が分からない。';
+  if (hasStatus('phone')) {
+    desc.textContent += '　（電話中で使えない）';
+    addBtn('閉じる', closeBag);
+    return;
+  }
   if (def.cat === 'weapon' || def.cat === 'shield' || def.cat === 'throw') {
     addBtn(isEquipped(sel) ? '外す' : '装備', () => { toggleEquip(sel); bagActionDone(true); }, true);
   } else if (def.cat === 'herb') {
@@ -1515,6 +1849,7 @@ const save = {
 function toStored(x) {
   const o = { id: x.id };
   if (x.count) o.count = x.count;
+  if (x.plus) o.plus = x.plus;
   if (x.unk) o.unk = true;
   return o;
 }
@@ -1623,6 +1958,7 @@ function sellPrice(x) {
 function storeFromRun(item) {
   const x = { uid: nextItemUid++, id: item.id };
   if (item.count) x.count = item.count;
+  if (item.plus) x.plus = item.plus;
   if (!isKnown(item.id)) x.unk = true;
   const fits = save.storage.length < DATA.village.storageSize ||
     (x.count && save.storage.some((y) => y.id === x.id && !y.unk));
@@ -1632,7 +1968,7 @@ function storeFromRun(item) {
 // 村での表示名
 function storedName(x) {
   const def = DATA.items[x.id];
-  const name = x.unk ? `正体不明の${DATA.itemCats[def.cat].label}` : def.name;
+  const name = x.unk ? `正体不明の${DATA.itemCats[def.cat].label}` : def.name + plusText(x.plus || 0);
   return name + (x.count ? `（${x.count}）` : '');
 }
 
@@ -1915,10 +2251,32 @@ function vAppraiser(panel) {
   vFinishList(list);
 }
 
-// 鍛冶屋：準備中
+// 鍛冶屋：武器と盾を強化する（錆びたものは修理）
+function smithCost(x) {
+  const next = (x.plus || 0) + 1;
+  return DATA.smith.costBase * Math.max(1, next) * Math.max(1, next);
+}
 function vSmith(panel) {
-  panel.insertAdjacentHTML('beforeend',
-    '<div class="v-note">🔨 ただいま準備中です。<br>そのうち武器や盾を鍛えられるようになります。</div>');
+  vHead(panel, `武器と盾を+${DATA.smith.max}まで鍛えられます（必ず成功）`);
+  const list = vList(panel, '鍛えられる武器・盾がない');
+  for (const src of ['carry', 'storage']) {
+    for (const x of save[src]) {
+      const cat = DATA.items[x.id].cat;
+      if (x.unk || (cat !== 'weapon' && cat !== 'shield')) continue;
+      const plus = x.plus || 0;
+      if (plus >= DATA.smith.max) { vRow(list, x, null, null, false, '最大'); continue; }
+      const cost = smithCost(x);
+      const label = plus < 0 ? '修理' : '強化';
+      vRow(list, x, label, () => {
+        if (save.tony < cost) { vMsg('トニーが足りない。'); return; }
+        save.tony -= cost;
+        x.plus = plus < 0 ? plus + 1 : plus + 1;
+        writeSave();
+        vMsg(`カン、カン……${DATA.items[x.id].name}が${plusText(x.plus) || '元通り'}になった！`);
+      }, save.tony < cost, `${src === 'carry' ? '持' : '倉'}・${cost}ト`);
+    }
+  }
+  vFinishList(list);
 }
 
 // ============================================================
@@ -1948,7 +2306,11 @@ function updateUI() {
   $('threads').textContent = p.threads > 0
     ? '🧵'.repeat(p.threads) + '・'.repeat(DATA.threads.max - p.threads)
     : '糸なし';
-  $('cond').textContent = (p.boost > 0 ? '⚡' : '') + (p.hidden > 0 ? '👻' : '');
+  let cond = '';
+  for (const id of Object.keys(p.status)) if (p.status[id] > 0) cond += DATA.status[id].icon;
+  if (state.enemies.some((e) => e.stolen > 0)) cond += '💸';
+  if (p.caffeine > 0) cond += '☕';
+  $('cond').textContent = cond + (p.boost > 0 ? '⚡' : '') + (p.hidden > 0 ? '👻' : '');
   $('lv').textContent = `Lv${p.level}`;
   $('hp').textContent = `HP ${p.hp}/${p.maxHp}`;
   const ratio = p.hp / p.maxHp;
@@ -2099,29 +2461,33 @@ function render() {
     drawFloorItem(f, f.x * ts - camX, f.y * ts - camY, ts, !state.visible[idx(f.x, f.y)]);
   }
 
-  // 敵（見えている敵だけ。危険察知を使った階では全部、見えない敵は薄く表示）
+  // 敵と主人公は、画面の奥（上）にいるものから順に描く（絵が重なっても自然に見えるように）
+  const actors = [];
   for (const e of state.enemies) {
     const seen = state.visible[idx(e.x, e.y)];
-    if (!seen && !state.sensed) continue;
-    ctx.globalAlpha = seen ? 1 : 0.5;
-    let ox = 0, oy = 0;
-    if (e.lunge > 0 && e.lungeDir >= 0) {
-      ox = DIRS[e.lungeDir][0] * e.lunge * ts * 0.25;
-      oy = DIRS[e.lungeDir][1] * e.lunge * ts * 0.25;
+    if (!seen && !state.sensed) continue; // 見えている敵だけ。危険察知を使った階では全部（見えない敵は薄く）
+    actors.push({ y: e.ry, draw: () => {
+      ctx.globalAlpha = seen ? 1 : 0.5;
+      let ox = 0, oy = 0;
+      if (e.lunge > 0 && e.lungeDir >= 0) {
+        ox = DIRS[e.lungeDir][0] * e.lunge * ts * 0.25;
+        oy = DIRS[e.lungeDir][1] * e.lunge * ts * 0.25;
+      }
+      drawEnemy(e, e.rx * ts - camX + ox, e.ry * ts - camY + oy, ts);
+      ctx.globalAlpha = 1;
+    } });
+  }
+  actors.push({ y: p.ry, draw: () => {
+    let pox = 0, poy = 0;
+    if (p.lunge > 0) {
+      pox = DIRS[p.dir][0] * p.lunge * ts * 0.25;
+      poy = DIRS[p.dir][1] * p.lunge * ts * 0.25;
     }
-    drawEnemy(e, e.rx * ts - camX + ox, e.ry * ts - camY + oy, ts);
+    if (p.hidden > 0) ctx.globalAlpha = 0.45; // 隠れ身中は半透明
+    drawPlayer(p.rx * ts - camX + pox, p.ry * ts - camY + poy, ts, p.dir, p.hurt);
     ctx.globalAlpha = 1;
-  }
-
-  // 主人公
-  let pox = 0, poy = 0;
-  if (p.lunge > 0) {
-    pox = DIRS[p.dir][0] * p.lunge * ts * 0.25;
-    poy = DIRS[p.dir][1] * p.lunge * ts * 0.25;
-  }
-  if (p.hidden > 0) ctx.globalAlpha = 0.45; // 隠れ身中は半透明
-  drawPlayer(p.rx * ts - camX + pox, p.ry * ts - camY + poy, ts, p.dir, p.hurt);
-  ctx.globalAlpha = 1;
+  } });
+  actors.sort((a, b) => a.y - b.y).forEach((a) => a.draw());
 
   // ダメージ数字
   ctx.textAlign = 'center';
@@ -2178,10 +2544,91 @@ function drawStairs(sx, sy, ts) {
   }
 }
 
-// 仮の敵：色つきの丸＋文字（残りHPはあえて表示しない）
+// ---- 敵の絵 ----
+// 1枚の絵に「正面・背面・左向き・左下向き・左上向き」が並んでいる。向き（DIRSの番号）ごとに使うコマと反転
+const ENEMY_FRAMES = [[2, true], [3, true], [0, false], [3, false], [2, false], [4, false], [1, false], [4, true]];
+const enemyImg = {};   // sprite名 → Image
+const enemyCache = {}; // 敵の種類 → 色を変えた5コマのキャンバス
+function enemySheet(def) {
+  if (!def.sprite) return null;
+  if (!(def.sprite in enemyImg)) {
+    const img = new Image();
+    img.onerror = () => { img.failed = true; };
+    img.src = DATA.view.enemy.path.replace('{sprite}', def.sprite);
+    enemyImg[def.sprite] = img;
+  }
+  const img = enemyImg[def.sprite];
+  return img.complete && img.naturalWidth > 0 && !img.failed ? img : null;
+}
+// 色違い（上位版）は、最初に一度だけ色を変えたコマを作っておく
+function enemyFrames(type) {
+  if (enemyCache[type]) return enemyCache[type];
+  const def = DATA.enemies[type];
+  const img = enemySheet(def);
+  if (!img) return null;
+  const fw = img.naturalWidth / 5, fh = img.naturalHeight;
+  const frames = [];
+  for (let i = 0; i < 5; i++) {
+    const c = document.createElement('canvas');
+    c.width = fw; c.height = fh;
+    const g = c.getContext('2d');
+    if (def.tint) g.filter = def.tint;
+    g.drawImage(img, i * fw, 0, fw, fh, 0, 0, fw, fh);
+    frames.push(c);
+  }
+  enemyCache[type] = frames;
+  return frames;
+}
+const flashCanvas = document.createElement('canvas');
+const flashCtx = flashCanvas.getContext('2d');
+
+// 絵で敵を描く。描けたら true
+function drawEnemySprite(e, sx, sy, ts) {
+  const frames = enemyFrames(e.type);
+  if (!frames) return false;
+  const [fi, flip] = ENEMY_FRAMES[e.dir === undefined ? 2 : e.dir];
+  let src = frames[fi];
+  const V = DATA.view.enemy;
+  const size = ts * V.size;
+  const hop = Math.sin((e.hop || 0) * Math.PI) * ts * V.hop;
+  // 影
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(sx + ts / 2, sy + ts * 0.9, ts * 0.28, ts * 0.09, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // 攻撃を受けた直後は白く光らせる
+  if (e.flash > 0) {
+    flashCanvas.width = src.width; flashCanvas.height = src.height;
+    flashCtx.globalCompositeOperation = 'source-over';
+    flashCtx.drawImage(src, 0, 0);
+    flashCtx.globalCompositeOperation = 'source-atop';
+    flashCtx.fillStyle = `rgba(255,255,255,${Math.min(1, e.flash) * 0.8})`;
+    flashCtx.fillRect(0, 0, src.width, src.height);
+    src = flashCanvas;
+  }
+  const x = sx + (ts - size) / 2;
+  const y = sy + ts - size + ts * 0.05 - hop;
+  ctx.save();
+  if (flip) { ctx.translate(x + size, y); ctx.scale(-1, 1); ctx.drawImage(src, 0, 0, size, size); }
+  else ctx.drawImage(src, x, y, size, size);
+  ctx.restore();
+  return true;
+}
+
+// 敵を描く。絵がなければ色つきの丸＋文字（残りHPはあえて表示しない）
 function drawEnemy(e, sx, sy, ts) {
   const def = DATA.enemies[e.type];
   const cx = sx + ts / 2, cy = sy + ts / 2;
+  if (drawEnemySprite(e, sx, sy, ts)) {
+    if (e.sleep > 0 || e.stun > 0) {
+      ctx.font = `bold ${Math.round(ts * 0.26)}px sans-serif`;
+      ctx.fillStyle = '#9fd3ff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(e.sleep > 0 ? 'Zz' : '★', cx + ts * 0.3, cy - ts * 0.4);
+    }
+    return;
+  }
   const r = def.boss ? 0.5 : 0.36; // ボスは大きく描く
   ctx.fillStyle = e.flash > 0 ? '#ffffff' : def.color;
   ctx.beginPath(); ctx.arc(cx, cy, ts * r, 0, Math.PI * 2); ctx.fill();
@@ -2395,6 +2842,7 @@ function frame(now) {
   p.hop = Math.max(0, p.hop - dt * 5);
   for (const e of state.enemies) {
     follow(e);
+    e.hop = Math.max(0, (e.hop || 0) - dt * 5);
     e.lunge = Math.max(0, (e.lunge || 0) - dt * 7);
     e.flash = Math.max(0, e.flash - dt * 6);
   }
