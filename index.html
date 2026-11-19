@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>異世界ダンジョンから定時で帰りたい（試作）</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=5.0">
 </head>
 <body>
   <div id="app">
@@ -12,7 +12,7 @@
     <header id="status">
       <div class="row">
         <span id="dungeon-name"></span>
-        <span id="floor"></span>
+        <span><span id="tony"></span>　<span id="floor"></span></span>
       </div>
       <div class="row">
         <span><span id="lv">Lv1</span>　<span id="hp">HP 30/30</span></span>
@@ -63,6 +63,18 @@
       </div>
     </div>
 
+    <!-- 村 -->
+    <div id="village" class="hidden">
+      <div class="v-top">
+        <span id="v-name"></span>
+        <span id="v-tony"></span>
+      </div>
+      <div id="v-revival"></div>
+      <div id="v-facilities"></div>
+      <div id="v-msg"></div>
+      <div id="v-panel"></div>
+    </div>
+
     <!-- 生還などのメッセージ -->
     <div id="overlay" class="hidden">
       <div class="panel">
@@ -73,7 +85,11 @@
     </div>
   </div>
 
-  <script src="data.js"></script>
-  <script src="game.js"></script>
+  <!-- バージョン表示（反映されたかの確認用） -->
+  <div id="version"></div>
+
+  <!-- ?v= の数字は更新のたびに上げる（スマホに古いファイルが残らないようにするため） -->
+  <script src="data.js?v=5.0"></script>
+  <script src="game.js?v=5.0"></script>
 </body>
 </html>
