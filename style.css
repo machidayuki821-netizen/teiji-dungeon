@@ -60,7 +60,20 @@ html, body {
 }
 #hpfill.mid { background: #e8c35a; }
 #hpfill.low { background: #e0484f; }
-#threads { letter-spacing: 2px; }
+/* 帰還の糸（タップで使う） */
+#threads {
+  padding: 2px 8px;
+  font-size: 15px;
+  letter-spacing: 2px;
+  background: #2d2a38;
+  border: 1px solid #8b1e32;
+  border-radius: 14px;
+}
+/* 時計：勤務時間＝白、残業＝オレンジ、終電後＝赤 */
+#clock { font-weight: bold; font-size: 16px; font-variant-numeric: tabular-nums; }
+#clock.overtime { color: #ff9a3c; }
+#clock.late { color: #ff5a5a; }
+#cond { margin-right: 6px; font-size: 13px; }
 
 /* ---- マップ ---- */
 #view {
@@ -293,6 +306,17 @@ button.on {
   display: flex;
   gap: 10px;
 }
+#ov-buttons.vertical { flex-direction: column; }
+#overlay .aria {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 14px;
+  background: #2a2533;
+  border-left: 3px solid #8b1e32;
+  border-radius: 6px;
+}
+#overlay .ad-note { font-size: 12px; color: #999; }
 #ov-buttons button {
   flex: 1;
   font-size: 16px;
