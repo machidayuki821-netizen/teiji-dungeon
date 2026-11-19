@@ -2,7 +2,7 @@
 // game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '7.0'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.1'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -45,6 +45,11 @@ const state = {
   portal: false,    // この階の階段が「帰還の魔法陣」か（ボスの階）
   ovSel: 0,         // メッセージ画面で選んでいるボタン（ジョイスティック操作用）
   test: false,      // テスト用の開始か
+  effects: [],      // 攻撃のエフェクト（斬撃・火花など）
+  corpses: [],      // 倒れて消えていく途中の敵
+  shake: 0,         // 画面の揺れ
+  animUntil: 0,     // 攻撃の演出が終わる時刻（それまでは操作を受け付けない）
+  popDelay: 0,      // ダメージ数字などを出すまでの待ち時間（攻撃が当たる瞬間に合わせる）
 };
 let nextEnemyId = 1;
 let nextItemUid = 1;
@@ -515,7 +520,7 @@ function enemyInDir(d) {
 
 // 1歩動く（敵がいれば攻撃）。連続移動を続けてよければ true を返す
 function stepPlayer(d) {
-  if (busy()) return false;
+  if (busy() || animBusy()) return false;
   const p = state.player;
   // 寝不足：半分の確率で違う方向へ
   if (hasStatus('confuse') && Math.random() < 0.5) d = rand(0, 7);
@@ -623,14 +628,20 @@ function playerAttack(e) {
   const p = state.player;
   const def = DATA.enemies[e.type];
   const w = weaponDef();
-  p.lunge = 1;
+  startAttack(p, p.dir);
+  state.popDelay = impactDelay();
   if (Math.random() > DATA.player.hitRate + (w.hitMod || 0)) {
     addLog(`${def.name}への攻撃は外れた。`);
     addPopup(e.x, e.y, 'ミス', DATA.colors.dmgToEnemy);
+    addEffect(p.weapon ? 'slash' : 'punch', e.x, e.y, p.dir, null);
+    state.popDelay = 0;
     return;
   }
   const dmg = calcDamage(playerAtk(), def.def);
+  const big = dmg >= Math.max(8, e.maxHp * 0.4);
+  addEffect(p.weapon ? 'slash' : 'punch', e.x, e.y, p.dir, e, { big });
   const r = hitEnemy(e, dmg);
+  state.popDelay = 0;
   if (r === 'dead') {
     addLog(`${def.name}をたおした。経験値${e.exp || def.exp}`);
     killEnemy(e);
@@ -644,6 +655,8 @@ function playerAttack(e) {
 function killEnemy(e) {
   const def = DATA.enemies[e.type];
   state.enemies = state.enemies.filter((x) => x !== e);
+  // 半透明で点滅しながら消えていく（攻撃が当たる瞬間までは、そのままの姿）
+  state.corpses.push({ e, t: -state.popDelay });
   gainExp(e.exp || def.exp);
   // 盗まれたトニーと、敵が持っていたトニー
   let tony = e.stolen || 0;
@@ -688,6 +701,14 @@ function gainExp(amount) {
 function doAction() {
   if (overlayOpen()) { pressOvSel(); return; }
   if (busy()) return;
+  // 攻撃の演出中に押されたら、終わってから実行する（1回分だけ）
+  if (animBusy()) {
+    if (!state.actionQueued) {
+      state.actionQueued = true;
+      setTimeout(() => { state.actionQueued = false; doAction(); }, state.animUntil - performance.now() + 10);
+    }
+    return;
+  }
   const p = state.player;
   if (hasStatus('confuse') && enemyInDir(p.dir) === null && Math.random() < 0.5) p.dir = rand(0, 7);
   const target = enemyInDir(p.dir);
@@ -853,10 +874,15 @@ function enemyActInner(e) {
   // 離れた所からの攻撃（書類を投げる）
   if (def.ranged && e.alert > 0 && dist(e.x, e.y, p.x, p.y) > 1 && Math.random() < def.ranged.chance && clearLine(e, p, def.ranged.range)) {
     e.dir = dirTo(e.x, e.y, p.x, p.y);
-    e.lunge = 1; e.lungeDir = e.dir;
+    startAttack(e, e.dir);
     for (let i = 0; i < def.ranged.times && p.hp > 0 && state.enemies.includes(e); i++) {
       addLog(`${def.name}は${def.ranged.text}！`);
-      if (Math.random() > def.hitRate) { addLog('当たらなかった。'); continue; }
+      // 書類が飛んでいく（距離に合わせて少し時間がかかる）
+      const flight = impactDelay() + 0.05 * dist(e.x, e.y, p.x, p.y) + i * 0.15;
+      state.animUntil = Math.max(state.animUntil, performance.now() + flight * 1000 + 80);
+      addEffect('proj', p.x, p.y, e.dir, null, { delay: 0, dur: flight, fx: e.x, fy: e.y });
+      state.popDelay = flight;
+      if (Math.random() > def.hitRate) { addLog('当たらなかった。'); state.popDelay = 0; continue; }
       const sd = shieldDef();
       if (sd.reflect && Math.random() < sd.reflect) {
         const dmg = calcDamage(enemyAtk(e), def.def);
@@ -865,8 +891,11 @@ function enemyActInner(e) {
         continue;
       }
       const dmg = calcDamage(enemyAtk(e), playerDef());
+      addEffect('spark', p.x, p.y, e.dir, p, { delay: flight });
       damagePlayer(dmg, def.name);
+      state.popDelay = 0;
     }
+    state.popDelay = 0;
     return;
   }
 
@@ -1019,15 +1048,20 @@ function nextStepToward(e, tx, ty) {
 function enemyAttack(e) {
   const def = DATA.enemies[e.type];
   const p = state.player;
-  e.lunge = 1;
-  e.lungeDir = dirTo(e.x, e.y, p.x, p.y);
+  const d = dirTo(e.x, e.y, p.x, p.y);
+  e.dir = d;
+  startAttack(e, d);
+  state.popDelay = impactDelay();
   if (Math.random() > def.hitRate) {
     addLog(`${def.name}の攻撃は外れた。`);
     addPopup(p.x, p.y, 'ミス', DATA.colors.dmgToPlayer);
+    state.popDelay = 0;
     return;
   }
   const dmg = calcDamage(enemyAtk(e), playerDef());
+  addEffect('claw', p.x, p.y, d, p, { big: dmg >= p.maxHp * 0.25 });
   damagePlayer(dmg, def.name);
+  state.popDelay = 0;
   addLog(`${def.name}の攻撃。${dmg}のダメージ。`);
   if (p.hp > 0) applyOnHit(e);
 }
@@ -1710,7 +1744,7 @@ function dropItem(item) {
 
 // 「投げる」ボタン：装備中の投げ物を、向いている方向に投げる
 function quickThrow() {
-  if (busy()) return;
+  if (busy() || animBusy()) return;
   const p = state.player;
   if (hasStatus('phone')) { addLog('電話中で手が離せない！'); return; }
   if (hasStatus('confuse') && Math.random() < 0.5) p.dir = rand(0, 7);
@@ -2289,7 +2323,34 @@ function addLog(msg) {
 }
 
 function addPopup(x, y, text, color) {
-  state.popups.push({ x, y, text, color, t: 0 });
+  state.popups.push({ x, y, text, color, t: -state.popDelay * 1.4 });
+}
+
+// ============================================================
+// 演出：攻撃のモーション・エフェクト・倒れる敵
+// ============================================================
+function animBusy() { return performance.now() < state.animUntil; }
+// 攻撃の動きを始める（溜め → 踏み込み → 戻る）
+function startAttack(actor, dir) {
+  actor.atkT = 0.0001;
+  actor.atkDir = dir;
+  state.animUntil = Math.max(state.animUntil, performance.now() + DATA.view.anim.lock);
+}
+// 攻撃の動きの位置（1マスに対する割合。マイナスは後ろに引いている）
+function attackOffset(t) {
+  if (!t) return 0;
+  const A = DATA.view.anim;
+  if (t < 0.35) return -A.windup * (t / 0.35);
+  if (t < 0.6) return -A.windup + (A.reach + A.windup) * ((t - 0.35) / 0.25);
+  return A.reach * (1 - (t - 0.6) / 0.4);
+}
+// 攻撃が当たる瞬間までの秒数
+function impactDelay() { return DATA.view.anim.attack * 0.6; }
+// エフェクトを出す。target を渡すと、当たる瞬間にのけぞらせる
+function addEffect(kind, x, y, dir, target, opts) {
+  const o = opts || {};
+  state.effects.push({ kind, x, y, dir, target, t: -(o.delay !== undefined ? o.delay : impactDelay()), dur: o.dur || 0.28,
+    big: !!o.big, fx: o.fx, fy: o.fy, triggered: false });
 }
 
 function updateUI() {
@@ -2415,9 +2476,10 @@ function render() {
   ctx.fillStyle = C.void;
   ctx.fillRect(0, 0, w, h);
 
-  // カメラ（主人公が画面中央に来るように）
-  const camX = p.rx * ts + ts / 2 - w / 2;
-  const camY = p.ry * ts + ts / 2 - h / 2;
+  // カメラ（主人公が画面中央に来るように）。大きなダメージのときは揺らす
+  const shake = state.shake * ts * 0.08;
+  const camX = p.rx * ts + ts / 2 - w / 2 + (shake ? (Math.random() - 0.5) * shake * 2 : 0);
+  const camY = p.ry * ts + ts / 2 - h / 2 + (shake ? (Math.random() - 0.5) * shake * 2 : 0);
   const x0 = Math.max(0, Math.floor(camX / ts) - 1);
   const y0 = Math.max(0, Math.floor(camY / ts) - 1);
   const x1 = Math.min(DATA.map.width - 1, Math.ceil((camX + w) / ts) + 1);
@@ -2468,26 +2530,34 @@ function render() {
     if (!seen && !state.sensed) continue; // 見えている敵だけ。危険察知を使った階では全部（見えない敵は薄く）
     actors.push({ y: e.ry, draw: () => {
       ctx.globalAlpha = seen ? 1 : 0.5;
-      let ox = 0, oy = 0;
-      if (e.lunge > 0 && e.lungeDir >= 0) {
-        ox = DIRS[e.lungeDir][0] * e.lunge * ts * 0.25;
-        oy = DIRS[e.lungeDir][1] * e.lunge * ts * 0.25;
+      const [ox, oy] = animOffset(e, ts);
+      drawEnemy(e, e.rx * ts - camX + ox, e.ry * ts - camY + oy, ts);
+      ctx.globalAlpha = 1;
+    } });
+  }
+  // 倒れて消えていく敵：半透明で高速に点滅する
+  for (const c of state.corpses) {
+    const e = c.e;
+    actors.push({ y: e.ry, draw: () => {
+      if (c.t >= 0) {
+        if (Math.floor(c.t * DATA.view.anim.deathBlinks) % 2) return;
+        ctx.globalAlpha = 0.6 * (1 - c.t);
       }
+      const [ox, oy] = animOffset(e, ts);
       drawEnemy(e, e.rx * ts - camX + ox, e.ry * ts - camY + oy, ts);
       ctx.globalAlpha = 1;
     } });
   }
   actors.push({ y: p.ry, draw: () => {
-    let pox = 0, poy = 0;
-    if (p.lunge > 0) {
-      pox = DIRS[p.dir][0] * p.lunge * ts * 0.25;
-      poy = DIRS[p.dir][1] * p.lunge * ts * 0.25;
-    }
+    const [pox, poy] = animOffset(p, ts);
     if (p.hidden > 0) ctx.globalAlpha = 0.45; // 隠れ身中は半透明
     drawPlayer(p.rx * ts - camX + pox, p.ry * ts - camY + poy, ts, p.dir, p.hurt);
     ctx.globalAlpha = 1;
   } });
   actors.sort((a, b) => a.y - b.y).forEach((a) => a.draw());
+
+  // 攻撃のエフェクト
+  for (const fx of state.effects) drawEffect(fx, ts, camX, camY);
 
   // ダメージ数字
   ctx.textAlign = 'center';
@@ -2585,7 +2655,19 @@ const flashCtx = flashCanvas.getContext('2d');
 // 絵で敵を描く。描けたら true
 function drawEnemySprite(e, sx, sy, ts) {
   const frames = enemyFrames(e.type);
-  if (!frames) return false;
+  if (!frames) {
+    // 読み込み中は影だけ（丸は、絵が本当にないときだけ出す）
+    const def = DATA.enemies[e.type];
+    const img = def.sprite ? enemyImg[def.sprite] : null;
+    if (img && !img.failed) {
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.beginPath();
+      ctx.ellipse(sx + ts / 2, sy + ts * 0.9, ts * 0.28, ts * 0.09, 0, 0, Math.PI * 2);
+      ctx.fill();
+      return true;
+    }
+    return false;
+  }
   const [fi, flip] = ENEMY_FRAMES[e.dir === undefined ? 2 : e.dir];
   let src = frames[fi];
   const V = DATA.view.enemy;
@@ -2606,11 +2688,15 @@ function drawEnemySprite(e, sx, sy, ts) {
     flashCtx.fillRect(0, 0, src.width, src.height);
     src = flashCanvas;
   }
-  const x = sx + (ts - size) / 2;
-  const y = sy + ts - size + ts * 0.05 - hop;
+  const def = DATA.enemies[e.type];
+  const [ir, isx, isy, ifl] = idleMotion(def.idle, (e.id || 0) * 0.73);
+  const footX = sx + ts / 2;
+  const footY = sy + ts + ts * 0.05 - hop - ifl * ts;
   ctx.save();
-  if (flip) { ctx.translate(x + size, y); ctx.scale(-1, 1); ctx.drawImage(src, 0, 0, size, size); }
-  else ctx.drawImage(src, x, y, size, size);
+  ctx.translate(footX, footY);
+  ctx.rotate(ir + attackLean(e));
+  ctx.scale(isx * (flip ? -1 : 1), isy);
+  ctx.drawImage(src, -size / 2, -size, size, size);
   ctx.restore();
   return true;
 }
@@ -2645,6 +2731,114 @@ function drawEnemy(e, sx, sy, ts) {
     ctx.font = `bold ${Math.round(ts * 0.26)}px sans-serif`;
     ctx.fillStyle = '#9fd3ff';
     ctx.fillText('Zz', cx + ts * 0.3, cy - ts * 0.3);
+  }
+}
+
+// 攻撃の動き（踏み込み）とのけぞりの位置ずれ
+function animOffset(o, ts) {
+  let ox = 0, oy = 0;
+  if (o.atkT) {
+    const a = attackOffset(o.atkT) * ts;
+    ox += DIRS[o.atkDir][0] * a; oy += DIRS[o.atkDir][1] * a;
+  }
+  if (o.kb > 0 && o.kbDir >= 0) {
+    const k = Math.sin(o.kb * Math.PI) * ts * DATA.view.anim.recoil;
+    ox += DIRS[o.kbDir][0] * k; oy += DIRS[o.kbDir][1] * k;
+  }
+  return [ox, oy];
+}
+// 踏み込むときの体の傾き（ラジアン）
+function attackLean(o) {
+  if (!o.atkT) return 0;
+  const a = attackOffset(o.atkT) / DATA.view.anim.reach;
+  const dx = DIRS[o.atkDir][0] || (o.atkDir === 2 ? 0.3 : -0.3);
+  return a * dx * DATA.view.anim.lean;
+}
+
+// エフェクトを描く
+function drawEffect(fx, ts, camX, camY) {
+  if (fx.t < 0) return;
+  const t = fx.t;
+  const cx = fx.x * ts - camX + ts / 2, cy = fx.y * ts - camY + ts / 2;
+  const ang = Math.atan2(DIRS[fx.dir][1], DIRS[fx.dir][0]);
+  ctx.save();
+  ctx.lineCap = 'round';
+  if (fx.kind === 'slash') {
+    // 武器を振った白い弧
+    ctx.globalAlpha = 1 - t;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = ts * 0.09 * (1 - t * 0.6);
+    ctx.shadowColor = '#bfe6ff'; ctx.shadowBlur = ts * 0.2;
+    const start = ang - 1.6 + t * 0.6;
+    ctx.beginPath(); ctx.arc(cx - Math.cos(ang) * ts * 0.25, cy - Math.sin(ang) * ts * 0.25, ts * 0.5, start, start + 1.4 + t * 1.4); ctx.stroke();
+    drawSpark(cx, cy, ts, t, '#fff6b0');
+  } else if (fx.kind === 'punch') {
+    // 素手：広がる輪
+    ctx.globalAlpha = 1 - t;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = ts * 0.06;
+    ctx.beginPath(); ctx.arc(cx, cy, ts * (0.15 + t * 0.35), 0, Math.PI * 2); ctx.stroke();
+    drawSpark(cx, cy, ts, t, '#fff6b0');
+  } else if (fx.kind === 'claw') {
+    // 敵の攻撃：3本の引っかき傷
+    ctx.globalAlpha = 1 - t;
+    ctx.strokeStyle = '#ff7a5a';
+    ctx.lineWidth = ts * 0.06;
+    const len = ts * 0.55 * Math.min(1, t * 3);
+    for (let i = -1; i <= 1; i++) {
+      const ox = Math.cos(ang + Math.PI / 2) * i * ts * 0.14, oy = Math.sin(ang + Math.PI / 2) * i * ts * 0.14;
+      const a2 = ang + 0.6;
+      ctx.beginPath();
+      ctx.moveTo(cx + ox - Math.cos(a2) * len / 2, cy + oy - Math.sin(a2) * len / 2);
+      ctx.lineTo(cx + ox + Math.cos(a2) * len / 2, cy + oy + Math.sin(a2) * len / 2);
+      ctx.stroke();
+    }
+  } else if (fx.kind === 'spark') {
+    drawSpark(cx, cy, ts, t, '#ffd84a');
+  } else if (fx.kind === 'proj') {
+    // 飛んでいく書類
+    const sx = fx.fx * ts - camX + ts / 2, sy = fx.fy * ts - camY + ts / 2;
+    const k = t;
+    const x = sx + (cx - sx) * k, y = sy + (cy - sy) * k - Math.sin(k * Math.PI) * ts * 0.3;
+    ctx.translate(x, y);
+    ctx.rotate(k * 10);
+    ctx.fillStyle = '#f4efe2';
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(-ts * 0.13, -ts * 0.17, ts * 0.26, ts * 0.34);
+    ctx.strokeRect(-ts * 0.13, -ts * 0.17, ts * 0.26, ts * 0.34);
+  }
+  ctx.restore();
+}
+// 当たった瞬間の火花
+function drawSpark(cx, cy, ts, t, color) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, 1 - t * 1.5);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = ts * 0.045;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + 0.3;
+    const r1 = ts * (0.08 + t * 0.2), r2 = ts * (0.2 + t * 0.35);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+    ctx.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 待機中の動き（ターンが止まっていても、ゆらゆら動く）
+// 返り値：[回転, 横の伸び, 縦の伸び, 上に浮く量（1マスに対する割合）]
+function idleMotion(kind, phase) {
+  const t = performance.now() / 1000 + phase;
+  const I = DATA.view.idle;
+  switch (kind) {
+    case 'sway':   return [Math.sin(t * 2.0) * I.sway, 1, 1, 0];
+    case 'float':  return [Math.sin(t * 1.3) * I.sway * 0.5, 1, 1, I.float * (1 + Math.sin(t * 2.2)) / 2 + I.float * 0.5];
+    case 'jitter': return [Math.sin(t * 9) * I.sway * 0.5, 1, 1 + Math.abs(Math.sin(t * 4.5)) * I.breathe * 0.5, 0];
+    case 'slow':   { const b = Math.sin(t * 1.2) * I.breathe * 1.3; return [0, 1 - b * 0.5, 1 + b, 0]; }
+    default:       { const b = Math.sin(t * 2.4) * I.breathe; return [0, 1 - b * 0.5, 1 + b, 0]; } // breathe
   }
 }
 
@@ -2727,10 +2921,12 @@ function drawHeroSprite(sx, sy, ts, dir, hurt) {
   const H = DATA.view.hero;
   const footX = x + size / 2;
   const footY = y + size * 0.97;
+  // 歩いていないときは、待機の動き（呼吸）
+  const [ir, isx, isy] = swing > 0 ? [0, 1, 1] : idleMotion(H.idle, 0);
   ctx.save();
   ctx.translate(footX, footY);
-  ctx.rotate(swing * H.tilt * (state.player.stepSide || 1));
-  ctx.scale(1 - swing * H.stretch * 0.5, 1 + swing * H.stretch);
+  ctx.rotate(swing * H.tilt * (state.player.stepSide || 1) + ir + attackLean(state.player));
+  ctx.scale((1 - swing * H.stretch * 0.5) * isx, (1 + swing * H.stretch) * isy);
   ctx.drawImage(tintCanvas, -size / 2, -size * 0.97, size, size);
   ctx.restore();
 
@@ -2837,15 +3033,37 @@ function frame(now) {
   };
   const p = state.player;
   follow(p);
-  p.lunge = Math.max(0, p.lunge - dt * 7);
+  const A = DATA.view.anim;
+  const animate = (o) => {
+    if (o.atkT) { o.atkT += dt / A.attack; if (o.atkT >= 1) o.atkT = 0; }
+    o.kb = Math.max(0, (o.kb || 0) - dt * 6);
+  };
+  animate(p);
   p.hurt = Math.max(0, p.hurt - dt * 4);
   p.hop = Math.max(0, p.hop - dt * 5);
   for (const e of state.enemies) {
     follow(e);
+    animate(e);
     e.hop = Math.max(0, (e.hop || 0) - dt * 5);
-    e.lunge = Math.max(0, (e.lunge || 0) - dt * 7);
     e.flash = Math.max(0, e.flash - dt * 6);
   }
+  // エフェクト：当たる瞬間に、相手をのけぞらせて光らせる
+  for (const fx of state.effects) {
+    fx.t += dt / (fx.t < 0 ? 1 : fx.dur);
+    if (fx.t >= 0 && !fx.triggered) {
+      fx.triggered = true;
+      if (fx.target) {
+        fx.target.kb = 1;
+        fx.target.kbDir = fx.dir;
+        if (fx.target === p) p.hurt = 1; else fx.target.flash = 1;
+      }
+      if (fx.big) state.shake = 1;
+    }
+  }
+  state.effects = state.effects.filter((fx) => fx.t < 1);
+  for (const c of state.corpses) { c.t += dt / A.death; animate(c.e); c.e.flash = Math.max(0, c.e.flash - dt * 6); }
+  state.corpses = state.corpses.filter((c) => c.t < 1);
+  state.shake = Math.max(0, state.shake - dt * 5);
   for (const pop of state.popups) pop.t += dt * 1.4;
   state.popups = state.popups.filter((pop) => pop.t < 1);
   render();
@@ -2908,12 +3126,15 @@ function firstStep() {
   if (!stick.active || stick.dir === null) return;
   // メッセージ画面が出ているときは、選ぶボタンを動かす（1回倒すごとに1つ）
   if (overlayOpen()) { moveOvSel(stick.dir); stick.halted = true; return; }
+  // 攻撃の演出中は、終わるのを待ってから動く
+  if (animBusy()) { stick.timer = setTimeout(firstStep, state.animUntil - performance.now() + 10); return; }
   if (!stepPlayer(stick.dir)) stick.halted = true;
   stick.timer = setTimeout(repeatStep, DATA.control.repeatDelay);
 }
 
 function repeatStep() {
   if (!stick.active || stick.dir === null || stick.halted) return;
+  if (animBusy()) { stick.timer = setTimeout(repeatStep, state.animUntil - performance.now() + 10); return; }
   if (!stepPlayer(stick.dir)) stick.halted = true;
   stick.timer = setTimeout(repeatStep, DATA.control.repeatInterval);
 }
@@ -3067,6 +3288,8 @@ if (loadSetting('swapControls')) $('app').classList.add('swapped');
 setShowMap(loadSetting('showMap'));
 $('version').textContent = `game ${GAME_VERSION} / data ${DATA.version || '-'}`;
 loadSave();
+// 敵の絵を先に読み込んでおく（初めて出てきたときに、一瞬だけ丸が出ないように）
+for (const def of Object.values(DATA.enemies)) enemySheet(def);
 startDungeon();   // 村の後ろに表示しておく迷宮（描画のため）
 openVillage();
 requestAnimationFrame(frame);
