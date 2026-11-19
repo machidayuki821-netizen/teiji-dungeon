@@ -42,6 +42,21 @@ const DATA = {
     levelUp: { hp: 5, atk: 1 },
   },
 
+  // 時計（満腹度の代わり）。時刻は「0時からの分」で持つ（540 = 9:00）
+  clock: {
+    start: 540,         // 迷宮に入る時刻（9:00）
+    overtime: 1020,     // 定時（17:00）。ここから自然回復が止まる
+    lastTrain: 1440,    // 終電（24:00）。ここから毎ターンHPが減る
+    perTurn: 1,         // 1ターンで進む分数
+    drain: 1,           // 終電後に毎ターン減るHP
+  },
+
+  // 帰還の糸（広告で使う命綱）
+  threads: {
+    count: 3,           // 1プレイの本数
+    rewind: 180,        // 「時を戻す」で戻る分数（3時間）
+  },
+
   // 敵の定義
   // move: 'chase' = まっすぐ追ってくる / 'erratic' = ふらふら動く（半分の確率でランダム移動）
   enemies: {
@@ -52,7 +67,7 @@ const DATA = {
   },
 
   // アイテムの定義
-  // cat（種類）: weapon=武器 / shield=盾 / herb=草 / scroll=巻物 / throw=投げ物
+  // cat（種類）: weapon=武器 / shield=盾 / herb=草 / scroll=巻物 / throw=投げ物 / time=砂時計 / drink=飲み物
   // 草と巻物は、迷宮に入るたびに見た目がシャッフルされる（未識別）
   items: {
     sword_copper: { name: '銅の剣', cat: 'weapon', atk: 3, desc: '攻撃力+3' },
@@ -70,6 +85,15 @@ const DATA = {
     scroll_map:      { name: '地図の巻物',   cat: 'scroll', effect: 'map',      desc: 'この階の地形と階段が分かる' },
     scroll_sleep:    { name: '眠りの巻物',   cat: 'scroll', effect: 'sleep',    desc: '見えている敵を眠らせる' },
     scroll_hide:     { name: '隠れ身の巻物', cat: 'scroll', effect: 'hide',     desc: 'しばらく敵に見つからなくなる' },
+    scroll_return:   { name: '帰還の巻物',   cat: 'scroll', effect: 'return',   desc: 'その場から地上へ生還する' },
+
+    // 時計を戻すアイテム（満腹度でいうパン）
+    sand_small:   { name: '時の砂',           cat: 'time', rewind: 120, desc: '時計を2時間戻す' },
+    sand_big:     { name: '大きな砂時計',     cat: 'time', resetStart: true, desc: '時計を朝9:00まで戻す' },
+    sand_cracked: { name: 'ひび割れた砂時計', cat: 'time', rewind: 120, damage: 6, desc: '時計を2時間戻すが、HPが6減る' },
+
+    // 回復を早めるアイテム
+    energy: { name: 'エナジードリンク', cat: 'drink', boostTurns: 30, desc: '30ターンの間、自然回復が2倍。残業中も回復する' },
 
     // stack: 束で落ちている数（最小, 最大）。同じものは1枠にまとめて持てる
     stone: { name: '投げ石', cat: 'throw', throwDmg: 6, stack: [3, 6], desc: '投げると6前後のダメージ。装備すると「投げる」ボタンで投げられる' },
@@ -82,6 +106,8 @@ const DATA = {
     herb:   { label: '草',     symbol: '草', color: '#5fbf6a' },
     scroll: { label: '巻物',   symbol: '巻', color: '#e8dca8' },
     throw:  { label: '投げ物', symbol: '石', color: '#9a9a9a' },
+    time:   { label: '砂時計', symbol: '砂', color: '#d9b46a' },
+    drink:  { label: '飲み物', symbol: '飲', color: '#6ab0d9' },
   },
 
   // 未識別のときの呼び名（種類の数より多めに用意しておく）
@@ -117,7 +143,7 @@ const DATA = {
       ],
       // 未識別の有無。本番の洞窟は「未識別なし（true）」の予定。試作では確認のため false
       identifyAll: false,
-      itemStart: [4, 7],    // 階に落ちているアイテムの数（最小, 最大）
+      itemStart: [5, 8],    // 階に落ちているアイテムの数（最小, 最大）
       itemTable: [
         { id: 'herb_heal',       from: 1, to: 10, weight: 10 },
         { id: 'herb_heal2',      from: 3, to: 10, weight: 3 },
@@ -128,6 +154,11 @@ const DATA = {
         { id: 'scroll_map',      from: 1, to: 10, weight: 3 },
         { id: 'scroll_sleep',    from: 2, to: 10, weight: 3 },
         { id: 'scroll_hide',     from: 2, to: 10, weight: 2 },
+        { id: 'scroll_return',   from: 2, to: 10, weight: 1 },
+        { id: 'sand_small',      from: 1, to: 10, weight: 6 },
+        { id: 'sand_big',        from: 3, to: 10, weight: 2 },
+        { id: 'sand_cracked',    from: 1, to: 10, weight: 2 },
+        { id: 'energy',          from: 1, to: 10, weight: 4 },
         { id: 'stone',           from: 1, to: 10, weight: 5 },
         { id: 'sword_copper',    from: 1, to: 6,  weight: 2 },
         { id: 'sword_iron',      from: 5, to: 10, weight: 1 },
@@ -143,7 +174,15 @@ const DATA = {
     alertTurns: 10,     // 見失っても、このターン数は最後に見た場所を追いかける
   },
 
-  // 色（仮素材）
+  // アリアのセリフ（帰還の糸を使うとき）
+  aria: {
+    thread: 'もう、仕方ないですね……祈りますから、ちゃんと帰ってきてくださいよ。',
+    revive: 'まだです！　まだ帰れます！　糸を引いてください！',
+    ontime: 'えっ、今日は早いですね！　おかえりなさい！',
+    overtime: 'おかえりなさい。今日も遅くまでお疲れさまでした。',
+    late: '……おかえりなさい。もう朝ですよ。',
+  },
+
   colors: {
     void: '#0b0b10',
     wall: '#2b2735',
@@ -166,5 +205,6 @@ const DATA = {
     dmgToPlayer: '#ff6b6b',
     heal: '#7dff9a',
     unknownName: '#ffd84a', // 持ち物画面での未識別アイテムの文字色
+    sensed: 'rgba(255,154,60,0.55)', // 危険察知で見えている敵
   },
 };
