@@ -1,8 +1,8 @@
 // ============================================================
-// game.js ― ゲームの仕組み（段階⑤：村）
+// game.js ― ゲームの仕組み（段階⑥：迷宮を増やす）
 // ============================================================
 'use strict';
-const GAME_VERSION = '5.0'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '6.0'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -41,16 +41,46 @@ const state = {
   locked: false,    // オーバーレイ表示中など、操作を受け付けない状態
   inVillage: false, // 村の画面を開いているか
   runTony: 0,       // 今回の探索で拾ったトニー（生還すると持ち帰れる）
+  threadsUsed: 0,   // 今回の探索で使った帰還の糸の本数（今日の迷宮の記録用）
+  portal: false,    // この階の階段が「帰還の魔法陣」か（ボスの階）
+  ovSel: 0,         // メッセージ画面で選んでいるボタン（ジョイスティック操作用）
+  test: false,      // テスト用の開始か
 };
 let nextEnemyId = 1;
 let nextItemUid = 1;
 
 // ---- 便利関数 ----
 const $ = (id) => document.getElementById(id);
-function rand(a, b) { return a + Math.floor(Math.random() * (b - a + 1)); }
+// 乱数。今日の迷宮では、地形などを作る間だけ「日付から決まる乱数」に切り替える
+let RNG = Math.random;
+function seededRandom(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function withSeed(seed, fn) {
+  RNG = seededRandom(seed);
+  try { fn(); } finally { RNG = Math.random; }
+}
+// 今日の日付（端末の時刻で）
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function dateSeed(key) {
+  let h = 2166136261;
+  for (const c of key) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+function rand(a, b) { return a + Math.floor(RNG() * (b - a + 1)); }
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(RNG() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
@@ -128,6 +158,13 @@ function playerDef() {
 // 3×3の区画に部屋（または通路の分岐点）を置き、隣同士を通路でつなぐ
 // ============================================================
 function generateFloor() {
+  const dungeon0 = DATA.dungeons[state.dungeonId];
+  if (dungeon0.daily) withSeed(dateSeed(state.dailyKey) + state.floor * 7919, buildFloor);
+  else buildFloor();
+  updateVisibility();
+}
+
+function buildFloor() {
   const cfg = DATA.map;
   const W = cfg.width, H = cfg.height;
   const cw = Math.floor(W / cfg.gridX);
@@ -277,14 +314,21 @@ function generateFloor() {
     }
   }
 
-  updateVisibility();
+  // 最下層：階段のかわりに帰還の魔法陣。ボスがその前に立ちはだかる
+  state.portal = !!(dungeon.floors && state.floor >= dungeon.floors && dungeon.boss);
+  if (state.portal) {
+    const spots = DIRS.map(([dx, dy]) => [stairs.x + dx, stairs.y + dy])
+      .filter(([x, y]) => walkable(x, y) && !isOccupied(x, y));
+    const [bx, by] = spots.length ? spots[rand(0, spots.length - 1)] : [stairs.x, stairs.y];
+    addEnemy(dungeon.boss, bx, by);
+  }
 }
 
 function pickItemType() {
   const table = DATA.dungeons[state.dungeonId].itemTable
     .filter((s) => state.floor >= s.from && state.floor <= s.to);
   const total = table.reduce((sum, s) => sum + s.weight, 0);
-  let r = Math.random() * total;
+  let r = RNG() * total;
   for (const s of table) {
     r -= s.weight;
     if (r < 0) return s.id;
@@ -309,7 +353,7 @@ function pickEnemyType() {
   const table = DATA.dungeons[state.dungeonId].spawnTable
     .filter((s) => state.floor >= s.from && state.floor <= s.to);
   const total = table.reduce((sum, s) => sum + s.weight, 0);
-  let r = Math.random() * total;
+  let r = RNG() * total;
   for (const s of table) {
     r -= s.weight;
     if (r < 0) return s.id;
@@ -329,15 +373,26 @@ function spawnEnemy(avoidRoom) {
     if (isOccupied(x, y)) continue;
     if (x === state.stairs.x && y === state.stairs.y) continue;
     if (state.visible && state.visible[idx(x, y)]) continue;
-    const type = pickEnemyType();
-    const def = DATA.enemies[type];
-    state.enemies.push({
-      id: nextEnemyId++, type, x, y, rx: x, ry: y,
-      hp: def.hp, maxHp: def.hp,
-      alert: 0, tx: null, ty: null, flash: 0, sleep: 0,
-    });
+    addEnemy(pickEnemyType(), x, y);
     return;
   }
+}
+
+// 敵を置く。深い階では強くなる（迷宮の scale）
+function addEnemy(type, x, y) {
+  const def = DATA.enemies[type];
+  const sc = DATA.dungeons[state.dungeonId].scale;
+  const over = sc ? Math.max(0, state.floor - sc.from) : 0;
+  const hp = Math.round(def.hp * (1 + (sc ? sc.hp : 0) * over));
+  const e = {
+    id: nextEnemyId++, type, x, y, rx: x, ry: y,
+    hp, maxHp: hp,
+    atk: Math.round(def.atk * (1 + (sc ? sc.atk : 0) * over)),
+    exp: Math.round(def.exp * (1 + (sc ? sc.hp : 0) * over)),
+    alert: 0, tx: null, ty: null, flash: 0, sleep: 0, summonTimer: 0,
+  };
+  state.enemies.push(e);
+  return e;
 }
 
 // ============================================================
@@ -478,12 +533,30 @@ function playerAttack(e) {
   e.alert = DATA.ai.alertTurns;
   addPopup(e.x, e.y, String(dmg), DATA.colors.dmgToEnemy);
   if (e.hp <= 0) {
-    state.enemies = state.enemies.filter((x) => x !== e);
-    addLog(`${def.name}をたおした。経験値${def.exp}`);
-    gainExp(def.exp);
-    dropLoot(e);
+    addLog(`${def.name}をたおした。経験値${e.exp || def.exp}`);
+    killEnemy(e);
   } else {
     addLog(`${def.name}に${dmg}のダメージ。`);
+  }
+}
+
+// 敵を倒したあとの処理（経験値・落とし物・ボスのごほうび）
+function killEnemy(e) {
+  const def = DATA.enemies[e.type];
+  state.enemies = state.enemies.filter((x) => x !== e);
+  gainExp(e.exp || def.exp);
+  if (!def.boss) { dropLoot(e); return; }
+  // ボスのごほうび
+  const R = def.reward;
+  state.runTony += R.tony;
+  addLog(`${def.name}をたおした！　${R.tony}トニーを手に入れた。`);
+  addPopup(e.x, e.y, `+${R.tony}ト`, DATA.colors.heal);
+  placeDrop(e.x, e.y, R.items[rand(0, R.items.length - 1)], def.name);
+  if (!save.bossBeaten[e.type] && !state.test) {
+    save.bossBeaten[e.type] = true;
+    addRevival(R.revival);
+    writeSave();
+    addLog('村の復興が少し進んだ！');
   }
 }
 
@@ -503,6 +576,7 @@ function gainExp(amount) {
 
 // 決定ボタン：向いている方向に敵がいれば攻撃、階段の上なら降りる、それ以外は足踏み
 function doAction() {
+  if (overlayOpen()) { pressOvSel(); return; }
   if (busy()) return;
   const p = state.player;
   const target = enemyInDir(p.dir);
@@ -615,6 +689,25 @@ function enemyAct(e) {
     e.alert--;
   }
 
+  // 手下を呼ぶ（ボス）
+  if (def.summon && e.alert > 0) {
+    e.summonTimer++;
+    const minions = state.enemies.filter((m) => m.minionOf === e.id).length;
+    if (e.summonTimer >= def.summon.every && minions < def.summon.max) {
+      const spots = DIRS.map(([dx, dy]) => [e.x + dx, e.y + dy]).filter(([x, y]) => walkable(x, y) && !isOccupied(x, y));
+      if (spots.length) {
+        e.summonTimer = 0;
+        const [mx, my] = spots[rand(0, spots.length - 1)];
+        const m = addEnemy(def.summon.ids[rand(0, def.summon.ids.length - 1)], mx, my);
+        m.minionOf = e.id;
+        m.alert = DATA.ai.alertTurns;
+        m.tx = p.x; m.ty = p.y;
+        addLog(def.summon.text);
+        return; // 呼んだターンは動かない
+      }
+    }
+  }
+
   // ふらふら動く敵は、半分の確率でランダムに動く
   if (def.move === 'erratic' && Math.random() < 0.5) {
     const dirs = shuffle([0, 1, 2, 3, 4, 5, 6, 7]);
@@ -695,7 +788,7 @@ function enemyAttack(e) {
     addPopup(p.x, p.y, 'ミス', DATA.colors.dmgToPlayer);
     return;
   }
-  const dmg = calcDamage(def.atk, playerDef());
+  const dmg = calcDamage(e.atk || def.atk, playerDef());
   p.hp = Math.max(0, p.hp - dmg);
   if (p.hp <= 0) state.deathCause = `${def.name}にやられた`;
   p.hurt = 1;
@@ -709,7 +802,18 @@ function enemyAttack(e) {
 // 階段に乗ったときの確認
 function askStairs() {
   const dungeon = DATA.dungeons[state.dungeonId];
-  const last = state.floor >= dungeon.floors;
+  if (state.portal) {
+    showOverlay(
+      '帰還の魔法陣',
+      'この魔法陣に乗れば、地上へ帰れる。<br>帰りますか？',
+      [
+        { label: '帰る', primary: true, onClick: () => { hideOverlay(); descend(); } },
+        { label: 'そのまま', onClick: () => { hideOverlay(); addLog('魔法陣の上にいる。'); } },
+      ]
+    );
+    return;
+  }
+  const last = dungeon.floors && state.floor >= dungeon.floors;
   showOverlay(
     '階段がある',
     last ? 'この先は出口だ。<br>地上へ戻りますか？' : `${state.floor + 1}階へ降りますか？`,
@@ -722,7 +826,7 @@ function askStairs() {
 
 function descend() {
   const dungeon = DATA.dungeons[state.dungeonId];
-  if (state.floor >= dungeon.floors) {
+  if (state.portal || (dungeon.floors && state.floor >= dungeon.floors)) {
     survive('踏破');
     return;
   }
@@ -751,8 +855,13 @@ function createPlayer() {
 }
 
 // 迷宮に入る。carried = 村から持ち込むアイテム（倉庫の形式 {id, count, unk}）
-function startDungeon(carried) {
+// opts = { test: true } でテスト開始（ボスの階から、強い状態で始める）
+function startDungeon(carried, opts) {
+  const o = opts || {};
   hideOverlay();
+  state.dailyKey = todayKey();
+  state.test = !!o.test;
+  state.threadsUsed = 0;
   state.floor = 1;
   state.turn = 0;
   state.logs = [];
@@ -768,8 +877,23 @@ function startDungeon(carried) {
     state.bag.push(item);
     if (!x.unk) state.identified.add(x.id);
   }
+  // テスト：ボスの階から、レベルを上げて装備を持った状態で始める
+  if (state.test) {
+    const D = DATA.debug;
+    state.floor = DATA.dungeons[state.dungeonId].floors || 1;
+    gainExp(DATA.player.expTable[D.testLevel - 2] || 0);
+    state.logs = [];
+    for (const id of D.testItems) {
+      if (state.bag.length >= DATA.bag.size) break;
+      const item = newItem(id);
+      state.bag.push(item);
+      const cat = DATA.items[id].cat;
+      if (cat === 'weapon' && !state.player.weapon) state.player.weapon = item;
+      if (cat === 'shield' && !state.player.shield) state.player.shield = item;
+    }
+  }
   generateFloor();
-  addLog(`${DATA.dungeons[state.dungeonId].name}に入った。`);
+  addLog(`${DATA.dungeons[state.dungeonId].name}に入った。${state.test ? '（テスト）' : ''}`);
   updateUI();
 }
 
@@ -785,6 +909,7 @@ function onDeath() {
       [
         { label: '糸を使って復活', primary: true, onClick: () => watchAd(() => {
           p.threads--;
+          state.threadsUsed++;
           p.hp = p.maxHp;
           p.hurt = 0;
           addLog('帰還の糸が光り、立ち上がった！');
@@ -802,6 +927,22 @@ function onDeath() {
 function finalDeath() {
   hideOverlay();
   addLog('力尽きた……');
+  if (DATA.dungeons[state.dungeonId].daily) {
+    const isNew = recordDaily();
+    writeSave();
+    const p = state.player;
+    showOverlay(
+      '力尽きた……',
+      `${state.deathCause || '力尽きた'}。<br>${DATA.dungeons[state.dungeonId].name} ${state.floor}階　${formatClock(p.clock)}　糸${state.threadsUsed}本` +
+      (isNew ? '<br><b>今日の自己ベスト更新！</b>' : '') +
+      (state.runTony ? `<br>拾った${state.runTony}トニーは失った` : ''),
+      [
+        { label: 'Xに貼る文章をコピー', primary: true, onClick: (ev) => copyShare(ev.currentTarget, false) },
+        { label: '村へ戻る', onClick: openVillage },
+      ]
+    );
+    return;
+  }
   showDeathResult();
 }
 
@@ -864,11 +1005,15 @@ function survive(how) {
   const multName = { ontime: '定時退社', overtime: '残業', late: '終電後' }[phase];
   const earned = Math.floor(state.runTony * M[phase]);
   save.tony += earned;
-  // 持ち物は倉庫へ（入りきらない分は売る）
-  const count = state.bag.length;
+  // 持ち物は倉庫へ（入りきらない分は売る）。今日の迷宮はトニーだけ
+  const daily = !!dungeon.daily;
+  const count = daily ? 0 : state.bag.length;
   let soldTony = 0;
-  for (const item of state.bag) soldTony += storeFromRun(item);
+  if (!daily) for (const item of state.bag) soldTony += storeFromRun(item);
   save.tony += soldTony;
+  if (!dungeon.daily && !state.test) save.cleared[state.dungeonId] = true;
+  if (state.test) save.cleared[state.dungeonId] = true; // テストでも今日の迷宮を確認できるように
+  const isNew = daily ? recordDaily() : false;
   writeSave();
 
   showOverlay(
@@ -877,9 +1022,13 @@ function survive(how) {
     `${dungeon.name} ${state.floor}階から${how === '踏破' ? '踏破して' : ''}帰還<br>` +
     `帰還時刻 ${formatClock(p.clock)}　Lv${p.level}<br>` +
     `トニー ${state.runTony} × ${M[phase].toFixed(1)}（${multName}）＝ <b>${earned}トニー</b><br>` +
-    `持ち帰ったアイテム：${count}個（倉庫へ）` +
+    (daily ? `糸${state.threadsUsed}本` + (isNew ? '<br><b>今日の自己ベスト更新！</b>' : '') + '<br>今日の迷宮のアイテムは持ち帰れない'
+      : `持ち帰ったアイテム：${count}個（倉庫へ）`) +
     (soldTony ? `<br>倉庫に入りきらない分を${soldTony}トニーで売った` : ''),
-    [{ label: '村へ戻る', primary: true, onClick: openVillage }]
+    daily ? [
+      { label: 'Xに貼る文章をコピー', primary: true, onClick: (ev) => copyShare(ev.currentTarget, true) },
+      { label: '村へ戻る', onClick: openVillage },
+    ] : [{ label: '村へ戻る', primary: true, onClick: openVillage }]
   );
 }
 
@@ -903,15 +1052,18 @@ function blinkClock() {
 function dropLoot(e) {
   const drop = DATA.enemies[e.type].drop;
   if (!drop || Math.random() >= drop.rate) return;
-  const id = drop.items[rand(0, drop.items.length - 1)];
+  placeDrop(e.x, e.y, drop.items[rand(0, drop.items.length - 1)], DATA.enemies[e.type].name);
+}
+// アイテムを足元に落とす（埋まっていれば周りに）
+function placeDrop(ex, ey, id, who) {
   const spots = [[0, 0], ...DIRS];
   for (const [dx, dy] of spots) {
-    const x = e.x + dx, y = e.y + dy;
+    const x = ex + dx, y = ey + dy;
     if (!walkable(x, y) || floorItemAt(x, y)) continue;
     if (x === state.stairs.x && y === state.stairs.y) continue;
     const item = newItem(id);
     state.floorItems.push({ x, y, item });
-    addLog(`${DATA.enemies[e.type].name}は${itemLabel(item)}を落とした。`);
+    addLog(`${who}は${itemLabel(item)}を落とした。`);
     return;
   }
 }
@@ -942,7 +1094,7 @@ function openThreadMenu() {
   }
   releaseStick();
   const hasUnknown = state.bag.some((x) => !isKnown(x.id));
-  const use = (fn) => () => { hideOverlay(); watchAd(() => { p.threads--; fn(); updateUI(); }); };
+  const use = (fn) => () => { hideOverlay(); watchAd(() => { p.threads--; state.threadsUsed++; fn(); updateUI(); }); };
   showOverlay(
     '帰還の糸',
     `どの力を借りますか？（残り${p.threads}本）`,
@@ -1198,10 +1350,8 @@ function throwItem(item) {
       e.alert = DATA.ai.alertTurns;
       addPopup(e.x, e.y, String(dmg), DATA.colors.dmgToEnemy);
       if (e.hp <= 0) {
-        state.enemies = state.enemies.filter((z) => z !== e);
-        addLog(`${name}が${edef.name}に当たった。${edef.name}をたおした。経験値${edef.exp}`);
-        gainExp(edef.exp);
-        dropLoot(e);
+        addLog(`${name}が${edef.name}に当たった。${edef.name}をたおした。経験値${e.exp || edef.exp}`);
+        killEnemy(e);
       } else {
         addLog(`${name}が${edef.name}に当たった。${dmg}のダメージ。`);
       }
@@ -1355,7 +1505,12 @@ function renderBag() {
 // アイテムは {uid, id, count?, unk?} の形で持つ。unk = 正体不明
 // ============================================================
 const SAVE_KEY = 'teijiDungeonSave';
-const save = { tony: 0, revival: 0, storage: [], carry: [] };
+const save = {
+  tony: 0, revival: 0, revivalProgress: 0, storage: [], carry: [],
+  cleared: {},      // 生還したことのある迷宮
+  bossBeaten: {},   // 倒したことのあるボス
+  daily: null,      // 今日の迷宮 { date, tries, adUsed, best: { floor, threads, clock } }
+};
 
 function toStored(x) {
   const o = { id: x.id };
@@ -1372,6 +1527,10 @@ function loadSave() {
     if (s) {
       save.tony = s.tony || 0;
       save.revival = s.revival || 0;
+      save.revivalProgress = s.revivalProgress || 0;
+      save.cleared = s.cleared || {};
+      save.bossBeaten = s.bossBeaten || {};
+      save.daily = s.daily || null;
       save.storage = (s.storage || []).filter((x) => DATA.items[x.id]).map(fromStored);
       save.carry = (s.carry || []).filter((x) => DATA.items[x.id]).map(fromStored);
     }
@@ -1382,10 +1541,68 @@ function writeSave() {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       tony: save.tony,
       revival: save.revival,
+      revivalProgress: save.revivalProgress,
+      cleared: save.cleared,
+      bossBeaten: save.bossBeaten,
+      daily: save.daily,
       storage: save.storage.map(toStored),
       carry: save.carry.map(toStored),
     }));
   } catch (err) { /* 保存できない環境でも遊べる */ }
+}
+
+// 村の復興を進める（寄付やボス討伐）。目標額に届いたら次の段階へ
+function addRevival(amount) {
+  save.revivalProgress += amount;
+  let next = DATA.village.revival[save.revival];
+  while (next && save.revivalProgress >= next.cost) {
+    save.revivalProgress -= next.cost;
+    save.revival++;
+    next = DATA.village.revival[save.revival];
+  }
+  if (!next) save.revivalProgress = 0;
+}
+
+// 今日の迷宮：日付が変わっていたら記録をリセット
+function dailyState() {
+  const key = todayKey();
+  if (!save.daily || save.daily.date !== key) save.daily = { date: key, tries: 0, adUsed: false, best: null };
+  return save.daily;
+}
+// 記録の比較：深い階 → 糸が少ない → 時刻が早い
+function betterRecord(a, b) {
+  if (!b) return true;
+  if (a.floor !== b.floor) return a.floor > b.floor;
+  if (a.threads !== b.threads) return a.threads < b.threads;
+  return a.clock < b.clock;
+}
+// 今回の記録を保存。自己ベストなら true
+function recordDaily() {
+  const d = dailyState();
+  const rec = { floor: state.floor, threads: state.threadsUsed, clock: state.player.clock };
+  if (betterRecord(rec, d.best)) { d.best = rec; return true; }
+  return false;
+}
+function recordText(r) {
+  return `${r.floor}階・糸${r.threads}本・${formatClock(r.clock)}`;
+}
+// Xに貼る文章をコピー
+function copyShare(btn, survived) {
+  const [, m, d] = state.dailyKey.split('-').map(Number);
+  const text = `${DATA.dungeons.daily.name}（${m}/${d}）\n` +
+    `地下${state.floor}階${survived ? 'から生還' : 'で力尽きた'}・糸${state.threadsUsed}本・${formatClock(state.player.clock)}\n` +
+    DATA.share.hashtag;
+  const done = () => { btn.textContent = 'コピーしました！'; };
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (err) { btn.textContent = 'コピーできませんでした'; }
+    ta.remove();
+  };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
+  else fallback();
 }
 
 // 束で持てるものは同じものにまとめて入れる
@@ -1436,13 +1653,20 @@ function openVillage() {
   $('village').classList.remove('hidden');
 }
 
-function depart() {
-  const carried = save.carry.map(toStored);
-  save.carry = [];
-  writeSave(); // 持ち込んだ物は、迷宮の中で失うこともある
+// 出発。opts = { test: true } でテスト開始
+function depart(id, opts) {
+  const dungeon = DATA.dungeons[id || 'cave'];
+  state.dungeonId = id || 'cave';
+  let carried = [];
+  if (!dungeon.noCarry) {
+    carried = save.carry.map(toStored);
+    save.carry = []; // 持ち込んだ物は、迷宮の中で失うこともある
+  }
+  if (dungeon.daily) dailyState().tries++;
+  writeSave();
   state.inVillage = false;
   $('village').classList.add('hidden');
-  startDungeon(carried);
+  startDungeon(carried, opts);
 }
 
 function facilityOpen(f) { return save.revival >= f.need; }
@@ -1460,13 +1684,14 @@ function renderVillage() {
   const rv = $('v-revival');
   rv.innerHTML = `<div>村の復興 <span class="stars">${stars}</span></div>`;
   if (next) {
+    const remain = next.cost - save.revivalProgress;
     const b = document.createElement('button');
-    b.textContent = `${next.cost}トニーを寄付（${next.text}）`;
-    if (save.tony < next.cost) b.classList.add('dim');
+    b.textContent = `${remain}トニーを寄付（${next.text}）`;
+    if (save.tony < remain) b.classList.add('dim');
     b.onclick = () => {
-      if (save.tony < next.cost) { vMsg('トニーが足りない。'); return; }
-      save.tony -= next.cost;
-      save.revival++;
+      if (save.tony < remain) { vMsg('トニーが足りない。'); return; }
+      save.tony -= remain;
+      addRevival(remain);
       writeSave();
       vMsg(`村が少し元気になった！　${next.text}。`);
     };
@@ -1535,22 +1760,55 @@ function vFinishList(list) {
   if (!list.children.length) list.innerHTML = `<div class="bag-empty">${list.dataset.empty}</div>`;
 }
 
-// アリアの祠：出発
+// アリアの祠：行き先を選んで出発
 function vShrine(panel) {
-  const dungeon = DATA.dungeons[state.dungeonId];
-  panel.insertAdjacentHTML('beforeend',
-    `<div class="aria">アリア「${DATA.aria.shrine}」</div>` +
-    `<div class="v-note">行き先：${dungeon.name}（全${dungeon.floors}階）<br>` +
-    `持ち込み：${save.carry.length}/${DATA.bag.size}個（倉庫で準備できます）</div>`);
-  if (save.carry.length) {
-    panel.insertAdjacentHTML('beforeend',
-      `<div class="v-note small">${save.carry.map(storedName).join('、')}</div>`);
+  panel.insertAdjacentHTML('beforeend', `<div class="aria">アリア「${DATA.aria.shrine}」</div>`);
+  for (const id of DATA.dungeonOrder) {
+    const dg = DATA.dungeons[id];
+    const card = document.createElement('div');
+    card.className = 'v-card';
+    const btns = document.createElement('div');
+    btns.className = 'v-card-btns';
+    const addBtn = (label, fn, cls) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      if (cls) b.className = cls;
+      b.onclick = fn;
+      btns.appendChild(b);
+    };
+    let info = '';
+    if (dg.locked) {
+      info = '🔒 準備中';
+    } else if (dg.needClear && !save.cleared[dg.needClear]) {
+      info = `🔒 ${DATA.dungeons[dg.needClear].name}から一度生還すると挑戦できます`;
+    } else if (dg.daily) {
+      const d = dailyState();
+      const left = dg.tries - d.tries;
+      info = `持ち込みなし・持ち帰りはトニーだけ<br>今日の記録：${d.best ? recordText(d.best) : 'まだありません'}`;
+      if (left > 0) {
+        info += `<br>残り挑戦：${left}回`;
+        addBtn('挑戦する', () => depart(id), 'primary');
+      } else if (!d.adUsed && dg.adTries > 0) {
+        info += '<br>今日の挑戦は終わりました';
+        addBtn('広告を見てもう1回挑戦', () => watchAd(() => {
+          d.adUsed = true;
+          d.tries -= dg.adTries;
+          writeSave();
+          renderVillage();
+        }, null, { title: 'もう1回挑戦', line: 'しょうがないですね、もう1回だけですよ？' }));
+      } else {
+        info += '<br>今日の挑戦は終わりました。また明日！';
+      }
+    } else {
+      info = `全${dg.floors}階${dg.boss ? '・最下層にボス' : ''}<br>持ち込み：${save.carry.length}/${DATA.bag.size}個（倉庫で準備）`;
+      if (save.carry.length) info += `<br><span class="small">${save.carry.map(storedName).join('、')}</span>`;
+      addBtn('出発する', () => depart(id), 'primary');
+      if (DATA.debug && DATA.debug.bossTest && dg.boss) addBtn('🧪 10階から（テスト）', () => depart(id, { test: true }));
+    }
+    card.innerHTML = `<div class="v-card-name">${dg.name}</div><div class="v-note">${info}</div>`;
+    if (btns.children.length) card.appendChild(btns);
+    panel.appendChild(card);
   }
-  const b = document.createElement('button');
-  b.className = 'big v-go';
-  b.textContent = '出発する';
-  b.onclick = depart;
-  panel.appendChild(b);
 }
 
 // 倉庫：倉庫 ⇄ 持ち込み
@@ -1701,9 +1959,9 @@ function updateUI() {
 
   let label = '足踏み';
   if (enemyInDir(p.dir)) label = '攻撃';
-  else if (onStairs()) label = '降りる';
+  else if (onStairs()) label = state.portal ? '帰る' : '降りる';
   else if (floorItemAt(p.x, p.y)) label = '拾う';
-  $('btn-action').textContent = label;
+  $('btn-action').textContent = overlayOpen() ? '決定' : label;
 
   // 投げるボタン：装備中の投げ物の残り数を表示
   const tb = $('btn-throw');
@@ -1728,11 +1986,45 @@ function showOverlay(title, text, buttons, vertical) {
     btn.onclick = b.onClick;
     box.appendChild(btn);
   });
-  $('overlay').classList.remove('hidden');
+  // 最初は「primary」のボタン（なければ1つ目）を選んだ状態にする
+  const first = buttons.findIndex((b) => b.primary);
+  setOvSel(first >= 0 ? first : 0);
+  // 迷宮の中では、操作エリア（ジョイスティックと決定ボタン）を隠さない
+  const ov = $('overlay');
+  if (state.inVillage) {
+    ov.style.bottom = '0px';
+  } else {
+    const top = $('controls').getBoundingClientRect().top;
+    ov.style.bottom = `${Math.max(0, window.innerHeight - top)}px`;
+  }
+  ov.classList.remove('hidden');
+  $('btn-action').textContent = '決定';
 }
 function hideOverlay() {
   state.locked = false;
   $('overlay').classList.add('hidden');
+  if (state.player && state.map) updateUI();
+}
+function overlayOpen() { return state.locked && !$('overlay').classList.contains('hidden'); }
+// メッセージ画面で選ぶボタンを変える
+function setOvSel(i) {
+  const btns = $('ov-buttons').querySelectorAll('button');
+  if (!btns.length) return;
+  state.ovSel = (i + btns.length) % btns.length;
+  btns.forEach((b, j) => b.classList.toggle('sel', j === state.ovSel));
+  btns[state.ovSel].scrollIntoView({ block: 'nearest' });
+}
+// ジョイスティックの向きで選択を動かす（縦並びは上下、横並びは左右）
+function moveOvSel(d) {
+  const [dx, dy] = DIRS[d];
+  const vertical = $('ov-buttons').classList.contains('vertical');
+  const delta = vertical ? (dy || dx) : (dx || dy);
+  setOvSel(state.ovSel + delta);
+}
+// 選んでいるボタンを押す
+function pressOvSel() {
+  const btns = $('ov-buttons').querySelectorAll('button');
+  if (btns[state.ovSel]) btns[state.ovSel].click();
 }
 
 // ============================================================
@@ -1852,6 +2144,31 @@ function render() {
 }
 
 function drawStairs(sx, sy, ts) {
+  // 帰還の魔法陣（ボスの階）
+  if (state.portal) {
+    const cx = sx + ts / 2, cy = sy + ts / 2;
+    const t = performance.now() / 1000;
+    ctx.save();
+    ctx.globalAlpha = 0.75 + Math.sin(t * 3) * 0.2;
+    ctx.strokeStyle = '#b78cff';
+    ctx.lineWidth = Math.max(2, ts * 0.06);
+    ctx.beginPath(); ctx.arc(cx, cy, ts * 0.4, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, ts * 0.26, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = t * 0.8 + (i * Math.PI) / 3;
+      const x = cx + Math.cos(a) * ts * 0.4, y = cy + Math.sin(a) * ts * 0.4;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      const b = a + (2 * Math.PI) / 3;
+      ctx.lineTo(cx + Math.cos(b) * ts * 0.4, cy + Math.sin(b) * ts * 0.4);
+      ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(183,140,255,0.25)';
+    ctx.beginPath(); ctx.arc(cx, cy, ts * 0.4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    return;
+  }
   ctx.fillStyle = DATA.colors.stairs;
   const pad = ts * 0.18;
   const step = (ts - pad * 2) / 3;
@@ -1865,13 +2182,14 @@ function drawStairs(sx, sy, ts) {
 function drawEnemy(e, sx, sy, ts) {
   const def = DATA.enemies[e.type];
   const cx = sx + ts / 2, cy = sy + ts / 2;
+  const r = def.boss ? 0.5 : 0.36; // ボスは大きく描く
   ctx.fillStyle = e.flash > 0 ? '#ffffff' : def.color;
-  ctx.beginPath(); ctx.arc(cx, cy, ts * 0.36, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, ts * r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = def.boss ? '#ffd84a' : 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = def.boss ? 3 : 2;
   ctx.stroke();
   ctx.fillStyle = '#fff';
-  ctx.font = `bold ${Math.round(ts * 0.36)}px sans-serif`;
+  ctx.font = `bold ${Math.round(ts * r)}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(def.symbol, cx, cy + 1);
@@ -2124,7 +2442,7 @@ function setStickDir(d) {
   if (d === null) return;
 
   // 向き変えモード：向きだけ変えて、移動はしない
-  if (state.turnMode) {
+  if (state.turnMode && !overlayOpen()) {
     turnPlayer(d);
     return;
   }
@@ -2140,6 +2458,8 @@ function setStickDir(d) {
 
 function firstStep() {
   if (!stick.active || stick.dir === null) return;
+  // メッセージ画面が出ているときは、選ぶボタンを動かす（1回倒すごとに1つ）
+  if (overlayOpen()) { moveOvSel(stick.dir); stick.halted = true; return; }
   if (!stepPlayer(stick.dir)) stick.halted = true;
   stick.timer = setTimeout(repeatStep, DATA.control.repeatDelay);
 }
@@ -2187,7 +2507,7 @@ function releaseStick() {
 
 zone.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  if (stick.active || busy()) return;
+  if (stick.active || (busy() && !overlayOpen())) return;
   zone.setPointerCapture(e.pointerId);
   const rect = zone.getBoundingClientRect();
   stick.active = true;
@@ -2264,8 +2584,10 @@ window.addEventListener('keydown', (e) => {
   // メッセージ画面：Enter/スペースで1つ目のボタン、Escで最後のボタン（やめる・そのまま）
   if (state.locked) {
     const btns = $('ov-buttons').querySelectorAll('button');
-    if ((e.key === 'Enter' || e.key === ' ') && btns[0]) { e.preventDefault(); btns[0].click(); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pressOvSel(); }
     if (e.key === 'Escape' && btns.length > 1) btns[btns.length - 1].click();
+    const kk = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (kk in KEY_DIRS) { e.preventDefault(); moveOvSel(KEY_DIRS[kk]); }
     return;
   }
   if (state.inVillage) return; // 村ではマウス・タッチで操作
