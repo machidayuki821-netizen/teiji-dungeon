@@ -385,6 +385,7 @@ function stepPlayer(d) {
   const prevRoom = roomAt(p.x, p.y);
   p.x += DIRS[d][0];
   p.y += DIRS[d][1];
+  p.hop = 1;
   updateVisibility();
   const hpBefore = p.hp;
   // 足元のアイテムを拾う（拾うのはターンを使わない）
@@ -459,6 +460,7 @@ function playerAttack(e) {
     state.enemies = state.enemies.filter((x) => x !== e);
     addLog(`${def.name}をたおした。経験値${def.exp}`);
     gainExp(def.exp);
+    dropLoot(e);
   } else {
     addLog(`${def.name}に${dmg}のダメージ。`);
   }
@@ -509,12 +511,12 @@ function endTurn() {
     if (p.hidden === 0) addLog('隠れ身の効果が切れた。');
   }
 
-  // 時計を進める（17:00と24:00でお知らせ）
+  // 時計を進める（24:00で止まる。17:00と24:00でお知らせ）
   const C = DATA.clock;
   const before = p.clock;
-  p.clock += C.perTurn;
-  if (before < C.overtime && p.clock >= C.overtime) addLog('17:00になった。定時を過ぎた……（自然回復が止まる）');
-  if (before < C.lastTrain && p.clock >= C.lastTrain) addLog('終電がなくなった……。体力が削られていく。');
+  p.clock = Math.min(C.lastTrain, p.clock + C.perTurn);
+  if (before < C.overtime && p.clock >= C.overtime) showNotice('overtime');
+  if (before < C.lastTrain && p.clock >= C.lastTrain) showNotice('lastTrain');
 
   // エナジードリンクの効果時間
   if (p.boost > 0) {
@@ -522,11 +524,13 @@ function endTurn() {
     if (p.boost === 0) addLog('エナジードリンクの効果が切れた。');
   }
 
-  // 自然回復：勤務時間中だけ。エナジードリンク中は2倍で、残業中も回復する
+  // 自然回復：勤務時間は通常、残業中は半分、終電後はなし
+  // エナジードリンク中は2倍（終電後も回復するが、HPの減少は止まらない）
   const phase = clockPhase();
-  const canRegen = phase === 'work' || p.boost > 0;
-  if (canRegen && p.hp < p.maxHp) {
-    p.regen += p.maxHp * DATA.player.regenRate * (p.boost > 0 ? 2 : 1);
+  let rate = phase === 'work' ? 1 : phase === 'overtime' ? C.overtimeRegen : 0;
+  if (p.boost > 0) rate = (rate || C.overtimeRegen) * 2;
+  if (rate > 0 && p.hp < p.maxHp) {
+    p.regen += p.maxHp * DATA.player.regenRate * rate;
     if (p.regen >= 1) {
       const heal = Math.floor(p.regen);
       p.regen -= heal;
@@ -535,6 +539,7 @@ function endTurn() {
   } else if (p.hp >= p.maxHp) {
     p.regen = 0;
   }
+  if (phase === 'late') blinkClock();
 
   // 終電後は毎ターンHPが減る
   if (phase === 'late') {
@@ -718,7 +723,8 @@ function createPlayer() {
     hidden: 0,                  // 隠れ身の残りターン
     clock: DATA.clock.start,    // 現在時刻（0時からの分）
     boost: 0,                   // エナジードリンクの残りターン
-    threads: DATA.threads.count,// 帰還の糸の残り本数
+    threads: DATA.dungeons[state.dungeonId].threads, // 帰還の糸の残り本数
+    hop: 0,                     // 歩いたときに跳ねる動き
   };
 }
 
@@ -799,6 +805,39 @@ function survive(how) {
   );
 }
 
+// 17:00・24:00のお知らせ（操作を止めて表示する）
+function showNotice(key) {
+  const n = DATA.notices[key];
+  releaseStick();
+  closeBag();
+  showOverlay(n.title, n.text, [{ label: n.button, primary: true, onClick: () => { hideOverlay(); updateUI(); } }]);
+}
+
+// 24:00以降、1ターンごとに時計の文字を点滅させる
+function blinkClock() {
+  const el = $('clock');
+  el.classList.remove('blink');
+  void el.offsetWidth; // アニメーションをやり直すため
+  el.classList.add('blink');
+}
+
+// 敵を倒したとき、確率でアイテムを落とす（足元が埋まっていれば周りに）
+function dropLoot(e) {
+  const drop = DATA.enemies[e.type].drop;
+  if (!drop || Math.random() >= drop.rate) return;
+  const id = drop.items[rand(0, drop.items.length - 1)];
+  const spots = [[0, 0], ...DIRS];
+  for (const [dx, dy] of spots) {
+    const x = e.x + dx, y = e.y + dy;
+    if (!walkable(x, y) || floorItemAt(x, y)) continue;
+    if (x === state.stairs.x && y === state.stairs.y) continue;
+    const item = newItem(id);
+    state.floorItems.push({ x, y, item });
+    addLog(`${DATA.enemies[e.type].name}は${itemLabel(item)}を落とした。`);
+    return;
+  }
+}
+
 // ============================================================
 // 帰還の糸（広告で使う命綱）
 // ============================================================
@@ -870,6 +909,17 @@ function pickUp() {
   const p = state.player;
   const f = floorItemAt(p.x, p.y);
   if (!f) return false;
+  // 帰還の糸は持ち物に入れず、糸の本数を増やす
+  if (itemDef(f.item).cat === 'thread') {
+    if (p.threads >= DATA.threads.max) {
+      addLog('帰還の糸はこれ以上持てない。');
+      return false;
+    }
+    p.threads++;
+    state.floorItems = state.floorItems.filter((x) => x !== f);
+    addLog('帰還の糸を拾った！　（使うときは広告が必要です）');
+    return true;
+  }
   // 束で持てるものは、同じものがあれば1枠にまとめる（持ち物がいっぱいでも拾える）
   if (f.item.count) {
     const same = state.bag.find((x) => x.id === f.item.id);
@@ -1064,6 +1114,7 @@ function throwItem(item) {
         state.enemies = state.enemies.filter((z) => z !== e);
         addLog(`${name}が${edef.name}に当たった。${edef.name}をたおした。経験値${edef.exp}`);
         gainExp(edef.exp);
+        dropLoot(e);
       } else {
         addLog(`${name}が${edef.name}に当たった。${dmg}のダメージ。`);
       }
@@ -1235,7 +1286,9 @@ function updateUI() {
   const phase = clockPhase();
   clock.classList.toggle('overtime', phase === 'overtime');
   clock.classList.toggle('late', phase === 'late');
-  $('threads').textContent = '🧵'.repeat(p.threads) + '・'.repeat(DATA.threads.count - p.threads);
+  $('threads').textContent = p.threads > 0
+    ? '🧵'.repeat(p.threads) + '・'.repeat(DATA.threads.max - p.threads)
+    : '糸なし';
   $('cond').textContent = (p.boost > 0 ? '⚡' : '') + (p.hidden > 0 ? '👻' : '');
   $('lv').textContent = `Lv${p.level}`;
   $('hp').textContent = `HP ${p.hp}/${p.maxHp}`;
@@ -1448,8 +1501,83 @@ function drawFloorItem(f, sx, sy, ts, dim) {
   ctx.globalAlpha = 1;
 }
 
-// 仮の主人公：赤いマント＋紺のスーツ＋顔、向きの矢印
+// ---- 主人公の絵 ----
+// 向き（DIRSの番号）ごとに使う絵と、左右反転するか
+const HERO_FRAMES = [
+  ['side', true],   // 0 右
+  ['diag', true],   // 1 右下
+  ['down', false],  // 2 下
+  ['diag', false],  // 3 左下
+  ['side', false],  // 4 左
+  ['up', false],    // 5 左上
+  ['up', false],    // 6 上
+  ['up', true],     // 7 右上
+];
+const heroImg = {};
+for (const key of ['down', 'up', 'side', 'diag']) {
+  const img = new Image();
+  img.src = DATA.view.hero[key];
+  heroImg[key] = img;
+}
+const tintCanvas = document.createElement('canvas');
+const tintCtx = tintCanvas.getContext('2d');
+
+function heroReady() {
+  return Object.values(heroImg).every((img) => img.complete && img.naturalWidth > 0);
+}
+
+// 絵で主人公を描く。ダメージ直後は赤く光らせる
+function drawHeroSprite(sx, sy, ts, dir, hurt) {
+  const [key, flip] = HERO_FRAMES[dir];
+  const img = heroImg[key];
+  const size = ts * DATA.view.hero.size;
+  const hop = Math.sin(state.player.hop * Math.PI) * ts * DATA.view.hero.hop;
+  const x = sx + (ts - size) / 2;
+  const y = sy + ts - size + ts * 0.05 - hop;
+
+  // 影
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(sx + ts / 2, sy + ts * 0.9, ts * 0.28, ts * 0.09, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 赤い光は別のキャンバスで絵の形に合わせて塗る
+  const dpr = window.devicePixelRatio || 1;
+  const px = Math.ceil(size * dpr);
+  if (tintCanvas.width !== px) { tintCanvas.width = px; tintCanvas.height = px; }
+  tintCtx.setTransform(1, 0, 0, 1, 0, 0);
+  tintCtx.clearRect(0, 0, px, px);
+  tintCtx.globalCompositeOperation = 'source-over';
+  if (flip) { tintCtx.translate(px, 0); tintCtx.scale(-1, 1); }
+  tintCtx.drawImage(img, 0, 0, px, px);
+  tintCtx.setTransform(1, 0, 0, 1, 0, 0);
+  if (hurt > 0) {
+    tintCtx.globalCompositeOperation = 'source-atop';
+    tintCtx.fillStyle = `rgba(255,40,40,${hurt * 0.6})`;
+    tintCtx.fillRect(0, 0, px, px);
+  }
+  ctx.drawImage(tintCanvas, x, y, size, size);
+
+  // 向きの目印（足元の小さな矢印）
+  const [dx, dy] = DIRS[dir];
+  const len = Math.hypot(dx, dy);
+  const ux = dx / len, uy = dy / len;
+  const cx = sx + ts / 2, cy = sy + ts * 0.9;
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.beginPath();
+  ctx.moveTo(cx + ux * ts * 0.42, cy + uy * ts * 0.2);
+  ctx.lineTo(cx + ux * ts * 0.3 - uy * ts * 0.07, cy + uy * ts * 0.13 + ux * ts * 0.04);
+  ctx.lineTo(cx + ux * ts * 0.3 + uy * ts * 0.07, cy + uy * ts * 0.13 - ux * ts * 0.04);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// 主人公を描く（絵が読み込めていなければ、仮の丸で描く）
 function drawPlayer(sx, sy, ts, dir, hurt) {
+  if (heroReady()) {
+    drawHeroSprite(sx, sy, ts, dir, hurt);
+    return;
+  }
   const C = DATA.colors;
   const cx = sx + ts / 2, cy = sy + ts / 2;
   ctx.fillStyle = C.cape;
@@ -1535,6 +1663,7 @@ function frame(now) {
   follow(p);
   p.lunge = Math.max(0, p.lunge - dt * 7);
   p.hurt = Math.max(0, p.hurt - dt * 4);
+  p.hop = Math.max(0, p.hop - dt * 6);
   for (const e of state.enemies) {
     follow(e);
     e.lunge = Math.max(0, (e.lunge || 0) - dt * 7);
