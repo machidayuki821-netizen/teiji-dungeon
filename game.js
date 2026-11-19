@@ -386,6 +386,7 @@ function stepPlayer(d) {
   p.x += DIRS[d][0];
   p.y += DIRS[d][1];
   p.hop = 1;
+  p.stepSide = -(p.stepSide || 1); // 1歩ごとに傾く向きを左右入れ替える
   updateVisibility();
   const hpBefore = p.hp;
   // 足元のアイテムを拾う（拾うのはターンを使わない）
@@ -725,6 +726,7 @@ function createPlayer() {
     boost: 0,                   // エナジードリンクの残りターン
     threads: DATA.dungeons[state.dungeonId].threads, // 帰還の糸の残り本数
     hop: 0,                     // 歩いたときに跳ねる動き
+    stepSide: 1,                // 歩くときに傾く向き（1 / -1 を交互に）
   };
 }
 
@@ -1556,7 +1558,17 @@ function drawHeroSprite(sx, sy, ts, dir, hurt) {
     tintCtx.fillStyle = `rgba(255,40,40,${hurt * 0.6})`;
     tintCtx.fillRect(0, 0, px, px);
   }
-  ctx.drawImage(tintCanvas, x, y, size, size);
+  // 歩く動き：足元を軸に、左右に傾けて縦に少し伸ばす
+  const swing = Math.sin(state.player.hop * Math.PI); // 0 → 1 → 0
+  const H = DATA.view.hero;
+  const footX = x + size / 2;
+  const footY = y + size * 0.97;
+  ctx.save();
+  ctx.translate(footX, footY);
+  ctx.rotate(swing * H.tilt * (state.player.stepSide || 1));
+  ctx.scale(1 - swing * H.stretch * 0.5, 1 + swing * H.stretch);
+  ctx.drawImage(tintCanvas, -size / 2, -size * 0.97, size, size);
+  ctx.restore();
 
   // 向きの目印（足元の小さな矢印）
   const [dx, dy] = DIRS[dir];
@@ -1663,7 +1675,7 @@ function frame(now) {
   follow(p);
   p.lunge = Math.max(0, p.lunge - dt * 7);
   p.hurt = Math.max(0, p.hurt - dt * 4);
-  p.hop = Math.max(0, p.hop - dt * 6);
+  p.hop = Math.max(0, p.hop - dt * 5);
   for (const e of state.enemies) {
     follow(e);
     e.lunge = Math.max(0, (e.lunge || 0) - dt * 7);
