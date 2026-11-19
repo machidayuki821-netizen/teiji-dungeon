@@ -3,7 +3,14 @@
 // 数値の調整は基本的にこのファイルだけで行う
 // ============================================================
 const DATA = {
-  version: '5.0',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
+  version: '6.0',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
+
+  // テスト用（本番では false にする）
+  debug: {
+    bossTest: true,     // 祠に「10階から（テスト）」ボタンを出す
+    testLevel: 8,       // テストで始めるときのレベル
+    testItems: ['sword_iron', 'shield_iron', 'herb_heal', 'herb_heal', 'herb_heal'], // テストで持たせるアイテム（武器・盾は装備した状態）
+  },
 
   // マップ生成の設定
   map: {
@@ -27,7 +34,7 @@ const DATA = {
       diag: 'img/hero_diag.png',
       updiag: 'img/hero_updiag.png', // 斜め上（左上向き。右上は左右反転）
       size: 1.2,     // 1マスに対する絵の大きさ
-      hop: 0,        // 歩いたときに跳ねる高さ（1マスに対する割合）。0で跳ねない（よちよち歩き）
+      hop: 0.12,     // 歩いたときに跳ねる高さ（1マスに対する割合）。0で跳ねない
       tilt: 0.12,    // 歩いたときに左右に傾く角度（0.12で約7度）。1歩ごとに左右が入れ替わる
       stretch: 0.08, // 歩いたときに縦に伸びる量（0.08で8%）
     },
@@ -99,6 +106,14 @@ const DATA = {
               drop: { rate: 0.15, items: ['stone', 'sword_copper', 'shield_wood'] } },
     goblin: { name: 'ゴブリン', symbol: 'ゴ', color: '#3f7f7a', hp: 16, atk: 5, def: 2, exp: 12, hitRate: 0.88, move: 'chase',
               drop: { rate: 0.20, items: ['sand_small', 'sword_iron', 'thread'] } },
+
+    // ボス（spawnTable には入れない。迷宮の boss で指定する）
+    // summon: 気づいてから every ターンごとに手下を呼ぶ（max 体まで）
+    // reward: 倒したときのごほうび。tony = トニー、items = この中から1つ必ず落とす、revival = 初めて倒したときに進む村の復興（トニー換算）
+    boss_overtime: { name: '残業の番人', symbol: '番', color: '#c0392b', hp: 80, atk: 7, def: 3, exp: 60, hitRate: 0.9, move: 'chase',
+              boss: true,
+              summon: { every: 6, max: 3, ids: ['kobold', 'goblin'], text: '残業の番人は部下を呼んだ！' },
+              reward: { tony: 300, items: ['herb_heal2', 'sword_iron', 'shield_iron', 'sand_big'], revival: 200 } },
   },
 
   // アイテムの定義
@@ -176,6 +191,7 @@ const DATA = {
       name: '村はずれの洞窟',
       floors: 10,
       threads: 1,           // 最初に持っている帰還の糸の本数
+      boss: 'boss_overtime',// 最下層のボス（最下層の階段は「帰還の魔法陣」になる）
       enemyStart: [3, 5],   // 階に着いたときの敵の数（最小, 最大）
       enemyMax: 8,          // 1つの階にいられる敵の最大数
       spawnEvery: 40,       // 何ターンごとに敵が1体湧くか
@@ -212,6 +228,68 @@ const DATA = {
         { id: 'shield_iron',     from: 5, to: 10, weight: 1 },
       ],
     },
+
+    // 今日の迷宮：日付から作るので、全員が同じ地形・同じアイテム配置になる
+    daily: {
+      name: '今日の迷宮',
+      daily: true,
+      floors: 0,            // 0 = 終わりなし
+      threads: 1,
+      needClear: 'cave',    // この迷宮から一度生還すると挑戦できる
+      noCarry: true,        // 持ち込みなし（Lv1・手ぶら）
+      tonyOnly: true,       // 持ち帰れるのはトニーだけ
+      tries: 1,             // 1日の挑戦回数
+      adTries: 1,           // 広告で増やせる回数
+      // 深い階ほど敵が強くなる：from階を超えた1階ごとに、HPと攻撃力が hp・atk の割合で増える
+      scale: { from: 5, hp: 0.10, atk: 0.06 },
+      enemyStart: [3, 5],
+      enemyMax: 8,
+      spawnEvery: 40,
+      spawnTable: [
+        { id: 'slime',  from: 1, to: 5,   weight: 5 },
+        { id: 'bat',    from: 2, to: 999, weight: 3 },
+        { id: 'kobold', from: 3, to: 999, weight: 4 },
+        { id: 'goblin', from: 6, to: 999, weight: 3 },
+      ],
+      identifyAll: false,
+      itemStart: [5, 8],
+      itemTable: [
+        { id: 'herb_heal',       from: 1, to: 999, weight: 10 },
+        { id: 'herb_heal2',      from: 3, to: 999, weight: 3 },
+        { id: 'herb_poison',     from: 1, to: 999, weight: 4 },
+        { id: 'herb_power',      from: 1, to: 999, weight: 2 },
+        { id: 'herb_happy',      from: 2, to: 999, weight: 1 },
+        { id: 'scroll_identify', from: 1, to: 999, weight: 4 },
+        { id: 'scroll_map',      from: 1, to: 999, weight: 3 },
+        { id: 'scroll_sleep',    from: 2, to: 999, weight: 3 },
+        { id: 'scroll_hide',     from: 2, to: 999, weight: 2 },
+        { id: 'scroll_return',   from: 2, to: 999, weight: 1 },
+        { id: 'sand_small',      from: 1, to: 999, weight: 6 },
+        { id: 'sand_big',        from: 3, to: 999, weight: 2 },
+        { id: 'sand_cracked',    from: 1, to: 999, weight: 2 },
+        { id: 'energy',          from: 1, to: 999, weight: 4 },
+        { id: 'thread',          from: 2, to: 999, weight: 1 },
+        { id: 'stone',           from: 1, to: 999, weight: 5 },
+        { id: 'sword_copper',    from: 1, to: 6,   weight: 2 },
+        { id: 'sword_iron',      from: 5, to: 999, weight: 1 },
+        { id: 'shield_wood',     from: 1, to: 6,   weight: 2 },
+        { id: 'shield_iron',     from: 5, to: 999, weight: 1 },
+      ],
+    },
+
+    // 帰らずの迷宮（準備中）
+    endless: {
+      name: '帰らずの迷宮',
+      locked: true,
+    },
+  },
+
+  // 祠に並べる迷宮の順番
+  dungeonOrder: ['cave', 'daily', 'endless'],
+
+  // Xに貼る文章
+  share: {
+    hashtag: '#定時ダンジョン',
   },
 
   // トニー（お金）
