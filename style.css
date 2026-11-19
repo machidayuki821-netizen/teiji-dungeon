@@ -449,3 +449,86 @@ button.on {
 .v-card-btns { display: flex; gap: 6px; margin-top: 8px; }
 .v-card-btns button { flex: 1; padding: 12px 0; font-size: 15px; }
 .v-card-btns button.primary { background: #5a1a28; border-color: #8b1e32; font-weight: bold; }
+
+/* ---- タイトル画面 ---- */
+#title {
+  position: fixed;
+  inset: 0;
+  max-width: 520px;
+  margin: 0 auto;
+  overflow: hidden;
+  z-index: 15;
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(120, 70, 160, 0.35), transparent 60%),
+    radial-gradient(ellipse at 50% 95%, rgba(232, 195, 90, 0.18), transparent 55%),
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.025) 0 2px, transparent 2px 46px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0 2px, transparent 2px 46px),
+    linear-gradient(#17131f, #0b0a10);
+  transition: opacity 0.45s;
+}
+#title.hidden { display: none; }
+#title.leaving { opacity: 0; }
+#title-logo {
+  position: absolute;
+  left: 50%;
+  top: calc(5% + env(safe-area-inset-top));
+  width: 94%;
+  transform: translateX(-50%);
+  z-index: 100;
+  filter: drop-shadow(0 6px 14px rgba(0,0,0,0.7));
+  animation: logo-in 1.2s ease-out both, logo-float 4s ease-in-out 1.2s infinite;
+}
+@keyframes logo-in {
+  from { opacity: 0; transform: translate(-50%, 20px) scale(0.92); }
+  to   { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+@keyframes logo-float {
+  0%, 100% { transform: translate(-50%, 0); }
+  50%      { transform: translate(-50%, -6px); }
+}
+#title-start {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: calc(2.5% + env(safe-area-inset-bottom));
+  text-align: center;
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  color: #ffe9a8;
+  text-shadow: 0 0 8px rgba(255, 200, 90, 0.8), 0 2px 3px #000;
+  z-index: 101;
+  animation: start-blink 1.4s ease-in-out infinite;
+}
+@keyframes start-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+/* 背景のキャラクター（位置は足元の中央） */
+#title-cast { position: absolute; inset: 0; }
+.t-chara {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  transform-origin: 50% 100%;
+  aspect-ratio: 1 / 1;
+  opacity: 0;
+}
+.t-chara::after {
+  content: '';
+  position: absolute;
+  left: 25%; right: 25%;
+  bottom: 1%;
+  height: 7%;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.35);
+  z-index: -1;
+}
+.t-img { width: 100%; height: 100%; background-repeat: no-repeat; }
+@keyframes chara-in { to { opacity: 1; } }
+/* 待機中の動き（ゲーム中と同じ種類） */
+.t-chara.idle-breathe { animation: chara-in 0.8s forwards, t-breathe 2.4s ease-in-out infinite; }
+.t-chara.idle-slow    { animation: chara-in 0.8s forwards, t-breathe 4s ease-in-out infinite; }
+.t-chara.idle-sway    { animation: chara-in 0.8s forwards, t-sway 3s ease-in-out infinite; }
+.t-chara.idle-float   { animation: chara-in 0.8s forwards, t-float 2.8s ease-in-out infinite; }
+.t-chara.idle-jitter  { animation: chara-in 0.8s forwards, t-jitter 0.7s ease-in-out infinite; }
+@keyframes t-breathe { 0%, 100% { transform: translate(-50%, -100%) scale(1, 1); } 50% { transform: translate(-50%, -100%) scale(0.985, 1.03); } }
+@keyframes t-sway    { 0%, 100% { transform: translate(-50%, -100%) rotate(-3deg); } 50% { transform: translate(-50%, -100%) rotate(3deg); } }
+@keyframes t-float   { 0%, 100% { transform: translate(-50%, -100%); } 50% { transform: translate(-50%, -108%); } }
+@keyframes t-jitter  { 0%, 100% { transform: translate(-50%, -100%) rotate(-1.2deg); } 50% { transform: translate(-50%, -100%) rotate(1.2deg) scale(1, 1.012); } }
