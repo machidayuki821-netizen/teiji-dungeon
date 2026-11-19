@@ -1,7 +1,8 @@
 // ============================================================
-// game.js ― ゲームの仕組み（段階④：帰る）
+// game.js ― ゲームの仕組み（段階⑤：村）
 // ============================================================
 'use strict';
+const GAME_VERSION = '5.0'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -38,6 +39,8 @@ const state = {
   showMini: false,  // 地図の常時表示
   turnMode: false,  // 向き変えモード（スティックで向きだけ変える）
   locked: false,    // オーバーレイ表示中など、操作を受け付けない状態
+  inVillage: false, // 村の画面を開いているか
+  runTony: 0,       // 今回の探索で拾ったトニー（生還すると持ち帰れる）
 };
 let nextEnemyId = 1;
 let nextItemUid = 1;
@@ -69,7 +72,7 @@ function isOccupied(x, y) {
 }
 function floorItemAt(x, y) { return state.floorItems.find((f) => f.x === x && f.y === y) || null; }
 // 操作を受け付けない状態か（メッセージ画面や持ち物画面を開いている）
-function busy() { return state.locked || state.bagOpen; }
+function busy() { return state.locked || state.bagOpen || state.inVillage; }
 
 // ---- アイテム関連の便利関数 ----
 function itemDef(item) { return DATA.items[item.id]; }
@@ -81,6 +84,7 @@ function newItem(id) {
 }
 // 表示名（束の数つき）
 function itemLabel(item) {
+  if (item.id === 'tony') return `${item.amount}トニー`;
   return itemName(item) + (item.count ? `（${item.count}）` : '');
 }
 function isKnown(id) {
@@ -253,6 +257,22 @@ function generateFloor() {
       if (x === stairs.x && y === stairs.y) continue;
       if (x === p.x && y === p.y) continue;
       state.floorItems.push({ x, y, item: newItem(pickItemType()) });
+      break;
+    }
+  }
+
+  // トニーの山を配置（額は階数に比例）
+  const T = DATA.tony;
+  const piles = rand(T.piles[0], T.piles[1]);
+  for (let i = 0; i < piles; i++) {
+    for (let tries = 0; tries < 30; tries++) {
+      const r = realList[rand(0, realList.length - 1)];
+      const x = rand(r.x, r.x + r.w - 1), y = rand(r.y, r.y + r.h - 1);
+      if (floorItemAt(x, y)) continue;
+      if (x === stairs.x && y === stairs.y) continue;
+      if (x === p.x && y === p.y) continue;
+      const item = { uid: nextItemUid++, id: 'tony', amount: rand(T.amount[0], T.amount[1]) * state.floor };
+      state.floorItems.push({ x, y, item });
       break;
     }
   }
@@ -730,15 +750,24 @@ function createPlayer() {
   };
 }
 
-function startDungeon() {
+// 迷宮に入る。carried = 村から持ち込むアイテム（倉庫の形式 {id, count, unk}）
+function startDungeon(carried) {
   hideOverlay();
   state.floor = 1;
   state.turn = 0;
   state.logs = [];
   state.player = createPlayer();
   state.bag = [];
+  state.runTony = 0;
   state.deathCause = '';
   setupUnknownNames();
+  // 持ち込んだアイテム。正体が分かっているものは、この迷宮でも最初から識別済み
+  for (const x of carried || []) {
+    const item = { uid: nextItemUid++, id: x.id };
+    if (x.count) item.count = x.count;
+    state.bag.push(item);
+    if (!x.unk) state.identified.add(x.id);
+  }
   generateFloor();
   addLog(`${DATA.dungeons[state.dungeonId].name}に入った。`);
   updateUI();
@@ -772,14 +801,44 @@ function onDeath() {
 
 function finalDeath() {
   hideOverlay();
+  addLog('力尽きた……');
+  showDeathResult();
+}
+
+// 力尽きた結果。持ち物があれば、広告で1つだけ回収できる（遺品回収）
+function showDeathResult(recovered) {
   const dungeon = DATA.dungeons[state.dungeonId];
   const p = state.player;
-  addLog('力尽きた……');
+  const lost = state.runTony > 0 ? `拾った${state.runTony}トニーと持ち物は失った` : '持ち物はすべて失った';
+  const buttons = [];
+  if (!recovered && state.bag.length > 0) {
+    buttons.push({ label: '遺品を1つ回収する（広告）', primary: true, onClick: () => {
+      hideOverlay();
+      watchAd(chooseRelic, showDeathResult, { title: '遺品回収', line: DATA.aria.relic });
+    } });
+  }
+  buttons.push({ label: '村へ戻る', primary: buttons.length === 0, onClick: openVillage });
   showOverlay(
     '力尽きた……',
-    `${state.deathCause || '力尽きた'}。<br>${dungeon.name} ${state.floor}階　${formatClock(p.clock)}<br>Lv${p.level}　持ち物はすべて失った`,
-    [{ label: 'もう一度潜る', primary: true, onClick: startDungeon }]
+    `${state.deathCause || '力尽きた'}。<br>${dungeon.name} ${state.floor}階　${formatClock(p.clock)}<br>Lv${p.level}　${lost}` +
+    (recovered ? `<br>${recovered}を回収して倉庫に送った。` : ''),
+    buttons
   );
+}
+
+// 遺品回収：失った持ち物から1つ選んで倉庫に送る
+function chooseRelic() {
+  const buttons = state.bag.map((item) => ({
+    label: itemLabel(item),
+    onClick: () => {
+      hideOverlay();
+      const label = itemLabel(item);
+      storeFromRun(item);
+      writeSave();
+      showDeathResult(label);
+    },
+  }));
+  showOverlay('遺品回収', 'どれを持ち帰りますか？', buttons, true);
 }
 
 // 生還：帰ってきた時刻で評価する
@@ -798,12 +857,29 @@ function survive(how) {
     title = `残業 ${Math.floor(over / 60)}時間${over % 60}分`;
     line = DATA.aria.overtime;
   } else { title = '終電を逃した……'; line = DATA.aria.late; }
+
+  // トニー：帰った時刻で倍率が変わる
+  const M = DATA.tony.mult;
+  const phase = p.clock <= C.overtime ? 'ontime' : p.clock < C.lastTrain ? 'overtime' : 'late';
+  const multName = { ontime: '定時退社', overtime: '残業', late: '終電後' }[phase];
+  const earned = Math.floor(state.runTony * M[phase]);
+  save.tony += earned;
+  // 持ち物は倉庫へ（入りきらない分は売る）
+  const count = state.bag.length;
+  let soldTony = 0;
+  for (const item of state.bag) soldTony += storeFromRun(item);
+  save.tony += soldTony;
+  writeSave();
+
   showOverlay(
     `生還！　${title}`,
     `<div class="aria">アリア「${line}」</div>` +
     `${dungeon.name} ${state.floor}階から${how === '踏破' ? '踏破して' : ''}帰還<br>` +
-    `帰還時刻 ${formatClock(p.clock)}　Lv${p.level}<br>持ち帰ったアイテム：${state.bag.length}個`,
-    [{ label: 'もう一度潜る', primary: true, onClick: startDungeon }]
+    `帰還時刻 ${formatClock(p.clock)}　Lv${p.level}<br>` +
+    `トニー ${state.runTony} × ${M[phase].toFixed(1)}（${multName}）＝ <b>${earned}トニー</b><br>` +
+    `持ち帰ったアイテム：${count}個（倉庫へ）` +
+    (soldTony ? `<br>倉庫に入りきらない分を${soldTony}トニーで売った` : ''),
+    [{ label: '村へ戻る', primary: true, onClick: openVillage }]
   );
 }
 
@@ -844,10 +920,12 @@ function dropLoot(e) {
 // 帰還の糸（広告で使う命綱）
 // ============================================================
 // 広告を見る（試作では、ボタンを押すと見たことになる）
-function watchAd(onDone, onCancel) {
+// opts = { title, line } で見出しとアリアのセリフを変えられる
+function watchAd(onDone, onCancel, opts) {
+  const o = opts || {};
   showOverlay(
-    '帰還の糸',
-    `<div class="aria">アリア「${DATA.aria.thread}」</div><span class="ad-note">（ここで広告が流れます）</span>`,
+    o.title || '帰還の糸',
+    `<div class="aria">アリア「${o.line || DATA.aria.thread}」</div><span class="ad-note">（ここで広告が流れます）</span>`,
     [
       { label: '広告を見た（試作）', primary: true, onClick: () => { hideOverlay(); onDone(); } },
       { label: 'やめる', onClick: () => { hideOverlay(); if (onCancel) onCancel(); } },
@@ -911,6 +989,13 @@ function pickUp() {
   const p = state.player;
   const f = floorItemAt(p.x, p.y);
   if (!f) return false;
+  // トニーは持ち物に入れず、所持金に足す
+  if (f.item.id === 'tony') {
+    state.runTony += f.item.amount;
+    state.floorItems = state.floorItems.filter((x) => x !== f);
+    addLog(`${f.item.amount}トニーを拾った。`);
+    return true;
+  }
   // 帰還の糸は持ち物に入れず、糸の本数を増やす
   if (itemDef(f.item).cat === 'thread') {
     if (p.threads >= DATA.threads.max) {
@@ -1266,6 +1351,319 @@ function renderBag() {
 }
 
 // ============================================================
+// セーブ（トニー・倉庫・持ち込み・村の復興）
+// アイテムは {uid, id, count?, unk?} の形で持つ。unk = 正体不明
+// ============================================================
+const SAVE_KEY = 'teijiDungeonSave';
+const save = { tony: 0, revival: 0, storage: [], carry: [] };
+
+function toStored(x) {
+  const o = { id: x.id };
+  if (x.count) o.count = x.count;
+  if (x.unk) o.unk = true;
+  return o;
+}
+function fromStored(x) {
+  return Object.assign({ uid: nextItemUid++ }, toStored(x));
+}
+function loadSave() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SAVE_KEY));
+    if (s) {
+      save.tony = s.tony || 0;
+      save.revival = s.revival || 0;
+      save.storage = (s.storage || []).filter((x) => DATA.items[x.id]).map(fromStored);
+      save.carry = (s.carry || []).filter((x) => DATA.items[x.id]).map(fromStored);
+    }
+  } catch (err) { /* 読めなければ最初から */ }
+}
+function writeSave() {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      tony: save.tony,
+      revival: save.revival,
+      storage: save.storage.map(toStored),
+      carry: save.carry.map(toStored),
+    }));
+  } catch (err) { /* 保存できない環境でも遊べる */ }
+}
+
+// 束で持てるものは同じものにまとめて入れる
+function addToList(list, x) {
+  if (x.count) {
+    const same = list.find((y) => y.id === x.id && !y.unk);
+    if (same) { same.count += x.count; return; }
+  }
+  list.push(x);
+}
+// 売値
+function sellPrice(x) {
+  if (x.unk) return DATA.village.unknownSell;
+  const def = DATA.items[x.id];
+  return Math.floor((def.price || 0) * (x.count || 1) * DATA.village.sellRate);
+}
+// 迷宮から持ち帰ったアイテムを倉庫へ。入りきらなければ売って、その額を返す
+function storeFromRun(item) {
+  const x = { uid: nextItemUid++, id: item.id };
+  if (item.count) x.count = item.count;
+  if (!isKnown(item.id)) x.unk = true;
+  const fits = save.storage.length < DATA.village.storageSize ||
+    (x.count && save.storage.some((y) => y.id === x.id && !y.unk));
+  if (fits) { addToList(save.storage, x); return 0; }
+  return sellPrice(x);
+}
+// 村での表示名
+function storedName(x) {
+  const def = DATA.items[x.id];
+  const name = x.unk ? `正体不明の${DATA.itemCats[def.cat].label}` : def.name;
+  return name + (x.count ? `（${x.count}）` : '');
+}
+
+// ============================================================
+// 村
+// ============================================================
+const village = { tab: 'shrine', shopMode: 'buy', msg: '' };
+
+function openVillage() {
+  hideOverlay();
+  releaseStick();
+  closeBag();
+  state.inVillage = true;
+  village.tab = 'shrine';
+  village.msg = '';
+  writeSave();
+  renderVillage();
+  $('village').classList.remove('hidden');
+}
+
+function depart() {
+  const carried = save.carry.map(toStored);
+  save.carry = [];
+  writeSave(); // 持ち込んだ物は、迷宮の中で失うこともある
+  state.inVillage = false;
+  $('village').classList.add('hidden');
+  startDungeon(carried);
+}
+
+function facilityOpen(f) { return save.revival >= f.need; }
+
+function vMsg(text) { village.msg = text; renderVillage(); }
+
+function renderVillage() {
+  const V = DATA.village;
+  $('v-name').textContent = V.name;
+  $('v-tony').textContent = `💰 ${save.tony} トニー`;
+
+  // 村の復興
+  const next = V.revival[save.revival];
+  const stars = '★'.repeat(save.revival) + '☆'.repeat(V.revival.length - save.revival);
+  const rv = $('v-revival');
+  rv.innerHTML = `<div>村の復興 <span class="stars">${stars}</span></div>`;
+  if (next) {
+    const b = document.createElement('button');
+    b.textContent = `${next.cost}トニーを寄付（${next.text}）`;
+    if (save.tony < next.cost) b.classList.add('dim');
+    b.onclick = () => {
+      if (save.tony < next.cost) { vMsg('トニーが足りない。'); return; }
+      save.tony -= next.cost;
+      save.revival++;
+      writeSave();
+      vMsg(`村が少し元気になった！　${next.text}。`);
+    };
+    rv.appendChild(b);
+  } else {
+    rv.insertAdjacentHTML('beforeend', '<div class="v-note">村はすっかり元気になった。</div>');
+  }
+
+  // 施設ボタン
+  const fac = $('v-facilities');
+  fac.innerHTML = '';
+  for (const f of V.facilities) {
+    const b = document.createElement('button');
+    const open = facilityOpen(f);
+    b.innerHTML = `<span class="v-icon">${open ? f.icon : '🔒'}</span>${f.name}`;
+    if (village.tab === f.key) b.classList.add('on');
+    if (!open) b.classList.add('dim');
+    b.onclick = () => {
+      if (!open) { vMsg(`${f.name}は、村がもう少し復興すると開く。`); return; }
+      village.tab = f.key;
+      village.msg = '';
+      renderVillage();
+    };
+    fac.appendChild(b);
+  }
+
+  $('v-msg').textContent = village.msg;
+  const panel = $('v-panel');
+  panel.innerHTML = '';
+  ({ shrine: vShrine, storage: vStorage, shop: vShop, appraiser: vAppraiser, smith: vSmith })[village.tab](panel);
+}
+
+// 一覧の1行（名前 + 右側のボタン）
+function vRow(list, x, btnLabel, onClick, dim, extra) {
+  const def = DATA.items[x.id];
+  const cat = DATA.itemCats[def.cat];
+  const row = document.createElement('div');
+  row.className = 'v-row';
+  row.innerHTML =
+    `<span class="item-icon" style="background:${cat.color}">${cat.symbol}</span>` +
+    `<span class="item-name${x.unk ? ' unknown' : ''}">${storedName(x)}</span>` +
+    (extra ? `<span class="v-price">${extra}</span>` : '');
+  if (btnLabel) {
+    const b = document.createElement('button');
+    b.textContent = btnLabel;
+    if (dim) b.classList.add('dim');
+    b.onclick = onClick;
+    row.appendChild(b);
+  }
+  list.appendChild(row);
+}
+function vHead(panel, text) {
+  const h = document.createElement('div');
+  h.className = 'v-head2';
+  h.textContent = text;
+  panel.appendChild(h);
+}
+function vList(panel, emptyText) {
+  const list = document.createElement('div');
+  list.className = 'v-list';
+  panel.appendChild(list);
+  list.dataset.empty = emptyText || 'なし';
+  return list;
+}
+function vFinishList(list) {
+  if (!list.children.length) list.innerHTML = `<div class="bag-empty">${list.dataset.empty}</div>`;
+}
+
+// アリアの祠：出発
+function vShrine(panel) {
+  const dungeon = DATA.dungeons[state.dungeonId];
+  panel.insertAdjacentHTML('beforeend',
+    `<div class="aria">アリア「${DATA.aria.shrine}」</div>` +
+    `<div class="v-note">行き先：${dungeon.name}（全${dungeon.floors}階）<br>` +
+    `持ち込み：${save.carry.length}/${DATA.bag.size}個（倉庫で準備できます）</div>`);
+  if (save.carry.length) {
+    panel.insertAdjacentHTML('beforeend',
+      `<div class="v-note small">${save.carry.map(storedName).join('、')}</div>`);
+  }
+  const b = document.createElement('button');
+  b.className = 'big v-go';
+  b.textContent = '出発する';
+  b.onclick = depart;
+  panel.appendChild(b);
+}
+
+// 倉庫：倉庫 ⇄ 持ち込み
+function vStorage(panel) {
+  vHead(panel, `持ち込み（${save.carry.length}/${DATA.bag.size}）　タップで倉庫へ戻す`);
+  const carry = vList(panel, '何も持っていかない');
+  for (const x of save.carry) {
+    vRow(carry, x, '戻す', () => {
+      save.carry = save.carry.filter((y) => y !== x);
+      addToList(save.storage, x);
+      writeSave();
+      vMsg(`${storedName(x)}を倉庫に戻した。`);
+    });
+  }
+  vFinishList(carry);
+  vHead(panel, `倉庫（${save.storage.length}/${DATA.village.storageSize}）　タップで持ち込みへ`);
+  const store = vList(panel, '倉庫は空っぽ');
+  for (const x of save.storage) {
+    const full = save.carry.length >= DATA.bag.size;
+    vRow(store, x, '持っていく', () => {
+      if (full) { vMsg(`一度に持ち込めるのは${DATA.bag.size}個まで。`); return; }
+      save.storage = save.storage.filter((y) => y !== x);
+      save.carry.push(x);
+      writeSave();
+      vMsg(`${storedName(x)}を持ち込みに入れた。`);
+    }, full);
+  }
+  vFinishList(store);
+}
+
+// 道具屋：買う・売る
+function vShop(panel) {
+  const tabs = document.createElement('div');
+  tabs.className = 'v-tabs';
+  for (const [mode, label] of [['buy', '買う'], ['sell', '売る']]) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (village.shopMode === mode) b.classList.add('on');
+    b.onclick = () => { village.shopMode = mode; village.msg = ''; renderVillage(); };
+    tabs.appendChild(b);
+  }
+  panel.appendChild(tabs);
+
+  if (village.shopMode === 'buy') {
+    vHead(panel, '買ったものは持ち込みへ（いっぱいなら倉庫へ）');
+    const list = vList(panel);
+    for (const s of DATA.village.shop) {
+      const x = { id: s.id };
+      if (s.count) x.count = s.count;
+      vRow(list, x, '買う', () => {
+        if (save.tony < s.price) { vMsg('トニーが足りない。'); return; }
+        const item = { uid: nextItemUid++, id: s.id };
+        if (s.count) item.count = s.count;
+        const toCarry = save.carry.length < DATA.bag.size || (item.count && save.carry.some((y) => y.id === item.id && !y.unk));
+        if (!toCarry && save.storage.length >= DATA.village.storageSize) { vMsg('持ち込みも倉庫もいっぱいだ。'); return; }
+        save.tony -= s.price;
+        addToList(toCarry ? save.carry : save.storage, item);
+        writeSave();
+        vMsg(`${storedName(item)}を買った。（${toCarry ? '持ち込み' : '倉庫'}へ）`);
+      }, save.tony < s.price, `${s.price}ト`);
+    }
+    vFinishList(list);
+    return;
+  }
+
+  // 売る：持ち込み → 倉庫の順に並べる
+  vHead(panel, `売値は半額（正体不明のものは${DATA.village.unknownSell}トニー）`);
+  const list = vList(panel, '売るものがない');
+  for (const [src, where] of [['carry', '持'], ['storage', '倉']]) {
+    for (const x of save[src]) {
+      const price = sellPrice(x);
+      vRow(list, x, '売る', () => {
+        save[src] = save[src].filter((y) => y !== x);
+        save.tony += price;
+        writeSave();
+        vMsg(`${storedName(x)}を${price}トニーで売った。`);
+      }, false, `${where}・${price}ト`);
+    }
+  }
+  vFinishList(list);
+}
+
+// 鑑定屋：正体不明のアイテムを鑑定
+function vAppraiser(panel) {
+  const cost = DATA.village.appraiseCost;
+  vHead(panel, `鑑定料は1個${cost}トニー`);
+  const list = vList(panel, '鑑定するものがない');
+  for (const src of ['carry', 'storage']) {
+    for (const x of save[src]) {
+      if (!x.unk) continue;
+      vRow(list, x, '鑑定', () => {
+        if (save.tony < cost) { vMsg('トニーが足りない。'); return; }
+        const before = storedName(x);
+        save.tony -= cost;
+        x.unk = false;
+        // 同じもの（束）がすでにあればまとめる
+        save[src] = save[src].filter((y) => y !== x);
+        addToList(save[src], x);
+        writeSave();
+        vMsg(`${before}は「${DATA.items[x.id].name}」だった！`);
+      }, save.tony < cost, src === 'carry' ? '持' : '倉');
+    }
+  }
+  vFinishList(list);
+}
+
+// 鍛冶屋：準備中
+function vSmith(panel) {
+  panel.insertAdjacentHTML('beforeend',
+    '<div class="v-note">🔨 ただいま準備中です。<br>そのうち武器や盾を鍛えられるようになります。</div>');
+}
+
+// ============================================================
 // 画面表示（UI部分）
 // ============================================================
 function addLog(msg) {
@@ -1282,6 +1680,7 @@ function updateUI() {
   const p = state.player;
   $('dungeon-name').textContent = DATA.dungeons[state.dungeonId].name;
   $('floor').textContent = `${state.floor}F`;
+  $('tony').textContent = `💰${state.runTony}`;
   // 時計と帰還の糸
   const clock = $('clock');
   clock.textContent = `🕘 ${formatClock(p.clock)}`;
@@ -1511,12 +1910,12 @@ const HERO_FRAMES = [
   ['down', false],  // 2 下
   ['diag', false],  // 3 左下
   ['side', false],  // 4 左
-  ['up', false],    // 5 左上
+  ['updiag', false], // 5 左上
   ['up', false],    // 6 上
-  ['up', true],     // 7 右上
+  ['updiag', true], // 7 右上
 ];
 const heroImg = {};
-for (const key of ['down', 'up', 'side', 'diag']) {
+for (const key of ['down', 'up', 'side', 'diag', 'updiag']) {
   const img = new Image();
   img.src = DATA.view.hero[key];
   heroImg[key] = img;
@@ -1869,6 +2268,7 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && btns.length > 1) btns[btns.length - 1].click();
     return;
   }
+  if (state.inVillage) return; // 村ではマウス・タッチで操作
   // 持ち物画面：Escで閉じる
   if (state.bagOpen) {
     if (e.key === 'Escape' && state.bagMode === 'normal') closeBag();
@@ -1895,5 +2295,8 @@ window.addEventListener('keydown', (e) => {
 // ============================================================
 if (loadSetting('swapControls')) $('app').classList.add('swapped');
 setShowMap(loadSetting('showMap'));
-startDungeon();
+$('version').textContent = `game ${GAME_VERSION} / data ${DATA.version || '-'}`;
+loadSave();
+startDungeon();   // 村の後ろに表示しておく迷宮（描画のため）
+openVillage();
 requestAnimationFrame(frame);
