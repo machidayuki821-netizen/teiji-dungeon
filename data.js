@@ -3,7 +3,7 @@
 // 数値の調整は基本的にこのファイルだけで行う
 // ============================================================
 const DATA = {
-  version: '7.0',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
+  version: '7.1',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
 
   // テスト用（本番では false にする）
   debug: {
@@ -37,6 +37,25 @@ const DATA = {
       hop: 0.12,     // 歩いたときに跳ねる高さ（1マスに対する割合）。0で跳ねない
       tilt: 0.12,    // 歩いたときに左右に傾く角度（0.12で約7度）。1歩ごとに左右が入れ替わる
       stretch: 0.08, // 歩いたときに縦に伸びる量（0.08で8%）
+      idle: 'breathe', // 待機中の動き（下の idle を参照）
+    },
+    // 待機中の動き（ターンが止まっていても動いている）。敵ごとに enemies の idle で選ぶ
+    // breathe=呼吸（伸び縮み） / slow=ゆっくり呼吸 / sway=左右に揺れる / float=ふわふわ浮く / jitter=小刻みに震える
+    idle: {
+      breathe: 0.03, // 伸び縮みの量（0.03で3%）
+      sway: 0.06,    // 揺れる角度（ラジアン。0.06で約3.5度）
+      float: 0.08,   // 浮く高さ（1マスに対する割合）
+    },
+    // 攻撃の演出
+    anim: {
+      attack: 0.26,  // 攻撃の動きの長さ（秒）。溜め → 踏み込み → 戻る
+      windup: 0.12,  // 溜めで後ろに引く量（1マスに対する割合）
+      reach: 0.32,   // 踏み込む量（1マスに対する割合）
+      lean: 0.25,    // 踏み込むときの体の傾き（ラジアン）
+      recoil: 0.12,  // 攻撃を受けた側がのけぞる量
+      lock: 260,     // 攻撃の演出中、操作を受け付けない時間（ミリ秒）。歩くときは待たない
+      death: 0.5,    // 倒れた敵が消えるまでの時間（秒）
+      deathBlinks: 14, // 消えるまでの点滅の回数
     },
     // 敵の絵：img/enemy_○○.png（256×256の絵を「正面・背面・左向き・左下向き・左上向き」の順に横に5つ並べた1枚）
     // 右向きの3方向は左右反転して使う。絵がない敵は丸＋文字で表示する
@@ -110,55 +129,55 @@ const DATA = {
   // drop: 倒したときに落とすアイテム。rate = 確率、items = 候補（この中から1つ）
   enemies: {
     // ---- 下位版 ----
-    sabizan:   { name: 'サビザン', sprite: 'sabizan', symbol: 'サ', color: '#8a4b2a', hp: 8, atk: 3, def: 0, exp: 5, hitRate: 0.85, move: 'chase',
+    sabizan:   { name: 'サビザン', sprite: 'sabizan', symbol: 'サ', color: '#8a4b2a', hp: 8, atk: 3, def: 0, exp: 5, hitRate: 0.85, idle: 'jitter', move: 'chase',
                  lastStand: true, overtimeAtk: 1.5,
                  drop: { rate: 0.12, items: ['bokuto', 'sword_copper', 'sword_iron', 'sword_norust'] } },
-    marunage:  { name: 'マルナゲ', sprite: 'marunage', symbol: 'マ', color: '#7f97a0', hp: 7, atk: 3, def: 0, exp: 5, hitRate: 0.85, move: 'keepAway',
+    marunage:  { name: 'マルナゲ', sprite: 'marunage', symbol: 'マ', color: '#7f97a0', hp: 7, atk: 3, def: 0, exp: 5, hitRate: 0.85, idle: 'sway', move: 'keepAway',
                  ranged: { range: 4, chance: 0.6, times: 1, text: '書類を投げてきた' },
                  drop: { rate: 0.12, items: ['stone', 'scroll_broadcast', 'scroll_identify'] } },
-    nemawashi: { name: 'ネマワシ', sprite: 'nemawashi', symbol: 'ネ', color: '#7a5a3c', hp: 8, atk: 2, def: 0, exp: 6, hitRate: 0.85, move: 'chase',
+    nemawashi: { name: 'ネマワシ', sprite: 'nemawashi', symbol: 'ネ', color: '#7a5a3c', hp: 8, atk: 2, def: 0, exp: 6, hitRate: 0.85, idle: 'breathe', move: 'chase',
                  rumor: true,
                  drop: { rate: 0.12, items: ['scroll_map', 'scroll_identify', 'scroll_sleep'] } },
-    madogiwa:  { name: 'マドギワ', sprite: 'madogiwa', symbol: 'ド', color: '#c9b083', hp: 18, atk: 3, def: 2, exp: 8, hitRate: 0.8, move: 'still', attackRate: 0.4,
+    madogiwa:  { name: 'マドギワ', sprite: 'madogiwa', symbol: 'ド', color: '#c9b083', hp: 18, atk: 3, def: 2, exp: 8, hitRate: 0.8, idle: 'slow', move: 'still', attackRate: 0.4,
                  aura: { status: 'sleep', range: 1, chance: 0.25, text: 'ぽかぽかした空気に、まぶたが重くなる……' },
                  drop: { rate: 0.12, items: ['herb_heal', 'herb_power'] } },
-    sontaku:   { name: 'ソンタク', sprite: 'sontaku', symbol: 'ソ', color: '#d4b24a', hp: 11, atk: 4, def: 1, exp: 8, hitRate: 0.88, move: 'flank',
+    sontaku:   { name: 'ソンタク', sprite: 'sontaku', symbol: 'ソ', color: '#d4b24a', hp: 11, atk: 4, def: 1, exp: 8, hitRate: 0.88, idle: 'sway', move: 'flank',
                  onHit: { status: 'confuse', rate: 0.3 },
                  drop: { rate: 0.12, items: ['herb_heal2', 'scroll_teiji', 'sand_big', 'energy'] } },
-    otsubone:  { name: 'オツボネ', sprite: 'otsubone', symbol: 'オ', color: '#7b4fa0', hp: 14, atk: 4, def: 1, exp: 9, hitRate: 0.88, move: 'territory',
+    otsubone:  { name: 'オツボネ', sprite: 'otsubone', symbol: 'オ', color: '#7b4fa0', hp: 14, atk: 4, def: 1, exp: 9, hitRate: 0.88, idle: 'breathe', move: 'territory',
                  onHit: { status: 'phone', rate: 0.3 },
                  drop: { rate: 0.12, items: ['sand_small', 'energy', 'coffee'] } },
-    nabakari:  { name: 'ナバカリ', sprite: 'nabakari', symbol: 'ナ', color: '#d9a92e', hp: 6, atk: 3, def: 0, exp: 10, hitRate: 0.85, move: 'chase',
+    nabakari:  { name: 'ナバカリ', sprite: 'nabakari', symbol: 'ナ', color: '#d9a92e', hp: 6, atk: 3, def: 0, exp: 10, hitRate: 0.85, idle: 'sway', move: 'chase',
                  armor: 3,
                  drop: { rate: 0.12, items: ['shield_wood', 'shield_iron', 'shield_silent', 'shield_alarm'] } },
-    amakudari: { name: 'アマクダリ', sprite: 'amakudari', symbol: 'ア', color: '#a8a8b8', hp: 12, atk: 3, def: 1, exp: 10, hitRate: 0.88, move: 'chase',
+    amakudari: { name: 'アマクダリ', sprite: 'amakudari', symbol: 'ア', color: '#a8a8b8', hp: 12, atk: 3, def: 1, exp: 10, hitRate: 0.88, idle: 'float', move: 'chase',
                  dropIn: true, onHit: { steal: 0.3, rate: 0.5 }, tonyDrop: [10, 20],
                  drop: { rate: 0.12, items: ['sand_small', 'shield_case'] } },
 
     // ---- 上位版（色違い・肩書き付き） ----
-    sabizan2:   { name: 'サビザン係長', sprite: 'sabizan', tint: 'hue-rotate(200deg) saturate(1.2)', symbol: 'サ', color: '#4a5f8a', hp: 22, atk: 7, def: 3, exp: 20, hitRate: 0.88, move: 'chase',
+    sabizan2:   { name: 'サビザン係長', sprite: 'sabizan', tint: 'hue-rotate(200deg) saturate(1.2)', symbol: 'サ', color: '#4a5f8a', hp: 22, atk: 7, def: 3, exp: 20, hitRate: 0.88, idle: 'jitter', move: 'chase',
                   lastStand: true, overtimeAtk: 1.5, onHit: { rust: 1, rate: 0.3 },
                   drop: { rate: 0.22, items: ['sword_iron', 'sword_steel', 'sword_teiji', 'sword_zangyo', 'hammer_hanko'] } },
-    marunage2:  { name: 'マルナゲ課長', sprite: 'marunage', tint: 'hue-rotate(120deg) saturate(1.4)', symbol: 'マ', color: '#9a7fa0', hp: 18, atk: 5, def: 2, exp: 18, hitRate: 0.88, move: 'keepAway',
+    marunage2:  { name: 'マルナゲ課長', sprite: 'marunage', tint: 'hue-rotate(120deg) saturate(1.4)', symbol: 'マ', color: '#9a7fa0', hp: 18, atk: 5, def: 2, exp: 18, hitRate: 0.88, idle: 'sway', move: 'keepAway',
                   ranged: { range: 5, chance: 0.7, times: 2, text: '書類を次々に投げてきた' },
                   drop: { rate: 0.22, items: ['stone', 'scroll_broadcast', 'scroll_hide'] } },
-    nemawashi2: { name: 'ネマワシ専務', sprite: 'nemawashi', tint: 'hue-rotate(260deg) saturate(1.5)', symbol: 'ネ', color: '#5a3c7a', hp: 18, atk: 4, def: 1, exp: 18, hitRate: 0.88, move: 'chase',
+    nemawashi2: { name: 'ネマワシ専務', sprite: 'nemawashi', tint: 'hue-rotate(260deg) saturate(1.5)', symbol: 'ネ', color: '#5a3c7a', hp: 18, atk: 4, def: 1, exp: 18, hitRate: 0.88, idle: 'breathe', move: 'chase',
                   rumor: true, rumorBuff: 20,
                   drop: { rate: 0.22, items: ['scroll_map', 'scroll_whet', 'scroll_broadcast'] } },
-    madogiwa2:  { name: 'マドギワ部長', sprite: 'madogiwa', tint: 'hue-rotate(300deg) saturate(1.3)', symbol: 'ド', color: '#c98383', hp: 36, atk: 6, def: 4, exp: 22, hitRate: 0.82, move: 'still', attackRate: 0.4,
+    madogiwa2:  { name: 'マドギワ部長', sprite: 'madogiwa', tint: 'hue-rotate(300deg) saturate(1.3)', symbol: 'ド', color: '#c98383', hp: 36, atk: 6, def: 4, exp: 22, hitRate: 0.82, idle: 'slow', move: 'still', attackRate: 0.4,
                   aura: { status: 'sleep', range: 4, chance: 0.2, text: '部屋じゅうがぽかぽかして、まぶたが重くなる……' },
                   drop: { rate: 0.22, items: ['herb_heal2', 'herb_cure', 'herb_happy'] } },
-    sontaku2:   { name: 'ソンタク秘書', sprite: 'sontaku', tint: 'hue-rotate(170deg) saturate(1.2)', symbol: 'ソ', color: '#4ab2d4', hp: 24, atk: 7, def: 3, exp: 22, hitRate: 0.9, move: 'flank',
+    sontaku2:   { name: 'ソンタク秘書', sprite: 'sontaku', tint: 'hue-rotate(170deg) saturate(1.2)', symbol: 'ソ', color: '#4ab2d4', hp: 24, atk: 7, def: 3, exp: 22, hitRate: 0.9, idle: 'sway', move: 'flank',
                   onHit: { status: 'confuse', rate: 0.35 }, buffAura: { range: 2, atk: 2 },
                   drop: { rate: 0.22, items: ['scroll_whet', 'scroll_teiji', 'herb_happy', 'shield_paid'] } },
-    otsubone2:  { name: 'オツボネ会長', sprite: 'otsubone', tint: 'hue-rotate(140deg) saturate(1.3)', symbol: 'オ', color: '#4fa07b', hp: 30, atk: 7, def: 3, exp: 25, hitRate: 0.9, move: 'territory',
+    otsubone2:  { name: 'オツボネ会長', sprite: 'otsubone', tint: 'hue-rotate(140deg) saturate(1.3)', symbol: 'オ', color: '#4fa07b', hp: 30, atk: 7, def: 3, exp: 25, hitRate: 0.9, idle: 'breathe', move: 'territory',
                   onHit: { status: 'phone', rate: 0.4 },
                   aura: { status: 'phone', range: 3, chance: 0.25, text: 'オツボネ会長の小言が聞こえてくる……' },
                   drop: { rate: 0.22, items: ['sand_big', 'energy', 'coffee', 'shield_claim'] } },
-    nabakari2:  { name: 'ナバカリ部長', sprite: 'nabakari', tint: 'hue-rotate(180deg) saturate(1.2)', symbol: 'ナ', color: '#2ea9d9', hp: 14, atk: 6, def: 1, exp: 30, hitRate: 0.88, move: 'chase',
+    nabakari2:  { name: 'ナバカリ部長', sprite: 'nabakari', tint: 'hue-rotate(180deg) saturate(1.2)', symbol: 'ナ', color: '#2ea9d9', hp: 14, atk: 6, def: 1, exp: 30, hitRate: 0.88, idle: 'sway', move: 'chase',
                   armor: 5,
                   drop: { rate: 0.22, items: ['shield_iron', 'shield_steel', 'shield_case', 'shield_file'] } },
-    amakudari2: { name: 'アマクダリ顧問', sprite: 'amakudari', tint: 'hue-rotate(-40deg) saturate(1.8) brightness(1.05)', symbol: 'ア', color: '#c8a838', hp: 26, atk: 6, def: 2, exp: 25, hitRate: 0.9, move: 'chase',
+    amakudari2: { name: 'アマクダリ顧問', sprite: 'amakudari', tint: 'hue-rotate(-40deg) saturate(1.8) brightness(1.05)', symbol: 'ア', color: '#c8a838', hp: 26, atk: 6, def: 2, exp: 25, hitRate: 0.9, idle: 'float', move: 'chase',
                   dropIn: true, onHit: { steal: 0.5, rate: 0.5 }, tonyDrop: [25, 45],
                   drop: { rate: 0.22, items: ['sand_big', 'shield_case', 'sword_keihi'] } },
 
