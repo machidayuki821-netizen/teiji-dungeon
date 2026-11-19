@@ -17,6 +17,15 @@ const DATA = {
   view: {
     cols: 9,         // 画面の横に表示するマス数（奇数にすると主人公が中央に来る）
     mapAlpha: 0.3,   // 常時表示する地図の濃さ（0〜1。0.25で透明度75%）
+    // 主人公の絵（向きごと）。横・斜めは左向きの絵で、右向きは左右反転して使う
+    hero: {
+      down: 'img/hero_down.png',
+      up:   'img/hero_up.png',
+      side: 'img/hero_side.png',
+      diag: 'img/hero_diag.png',
+      size: 1.2,     // 1マスに対する絵の大きさ
+      hop: 0.12,     // 歩いたときに跳ねる高さ（1マスに対する割合）
+    },
   },
 
   // 操作の設定
@@ -45,25 +54,46 @@ const DATA = {
   // 時計（満腹度の代わり）。時刻は「0時からの分」で持つ（540 = 9:00）
   clock: {
     start: 540,         // 迷宮に入る時刻（9:00）
-    overtime: 1020,     // 定時（17:00）。ここから自然回復が止まる
-    lastTrain: 1440,    // 終電（24:00）。ここから毎ターンHPが減る
+    overtime: 1020,     // 定時（17:00）。ここから自然回復が半分になる
+    lastTrain: 1440,    // 終電（24:00）。時計はここで止まり、毎ターンHPが減る
+    overtimeRegen: 0.5, // 残業中の自然回復の倍率（0.5 = 半分）
     perTurn: 1,         // 1ターンで進む分数
     drain: 1,           // 終電後に毎ターン減るHP
   },
 
   // 帰還の糸（広告で使う命綱）
+  // 最初の本数は迷宮ごとに設定する（dungeons の threads）
   threads: {
-    count: 3,           // 1プレイの本数
+    max: 3,             // 持てる最大本数
     rewind: 180,        // 「時を戻す」で戻る分数（3時間）
+  },
+
+  // 17:00と24:00のお知らせ
+  notices: {
+    overtime: {
+      title: '定時です。',
+      text: '🔔 キーンコーンカーンコーン♪<br>これより残業モードに入ります。<br>自然回復は半分になります。',
+      button: '残業する',
+    },
+    lastTrain: {
+      title: '終電が出発しました。',
+      text: '🚃 プシュー……<br>本日の自然回復は終了しました。<br>これより体力の自動引き落としを開始します。',
+      button: '歩いて帰る',
+    },
   },
 
   // 敵の定義
   // move: 'chase' = まっすぐ追ってくる / 'erratic' = ふらふら動く（半分の確率でランダム移動）
+  // drop: 倒したときに落とすアイテム。rate = 確率、items = 候補（この中から1つ）
   enemies: {
-    slime:  { name: 'スライム', symbol: 'ス', color: '#4fae5a', hp: 6,  atk: 2, def: 0, exp: 3,  hitRate: 0.85, move: 'chase' },
-    bat:    { name: 'コウモリ', symbol: 'モ', color: '#7a5aa8', hp: 7,  atk: 3, def: 0, exp: 5,  hitRate: 0.85, move: 'erratic' },
-    kobold: { name: 'コボルド', symbol: 'コ', color: '#a8743a', hp: 11, atk: 3, def: 1, exp: 7,  hitRate: 0.88, move: 'chase' },
-    goblin: { name: 'ゴブリン', symbol: 'ゴ', color: '#3f7f7a', hp: 16, atk: 5, def: 2, exp: 12, hitRate: 0.88, move: 'chase' },
+    slime:  { name: 'スライム', symbol: 'ス', color: '#4fae5a', hp: 6,  atk: 2, def: 0, exp: 3,  hitRate: 0.85, move: 'chase',
+              drop: { rate: 0.10, items: ['herb_heal', 'sand_small'] } },
+    bat:    { name: 'コウモリ', symbol: 'モ', color: '#7a5aa8', hp: 7,  atk: 3, def: 0, exp: 5,  hitRate: 0.85, move: 'erratic',
+              drop: { rate: 0.10, items: ['stone', 'energy'] } },
+    kobold: { name: 'コボルド', symbol: 'コ', color: '#a8743a', hp: 11, atk: 3, def: 1, exp: 7,  hitRate: 0.88, move: 'chase',
+              drop: { rate: 0.15, items: ['stone', 'sword_copper', 'shield_wood'] } },
+    goblin: { name: 'ゴブリン', symbol: 'ゴ', color: '#3f7f7a', hp: 16, atk: 5, def: 2, exp: 12, hitRate: 0.88, move: 'chase',
+              drop: { rate: 0.20, items: ['sand_small', 'sword_iron', 'thread'] } },
   },
 
   // アイテムの定義
@@ -95,6 +125,9 @@ const DATA = {
     // 回復を早めるアイテム
     energy: { name: 'エナジードリンク', cat: 'drink', boostTurns: 30, desc: '30ターンの間、自然回復が2倍。残業中も回復する' },
 
+    // 帰還の糸：拾うと糸が1本増える（持ち物には入らない）。使うときは広告が必要
+    thread: { name: '帰還の糸', cat: 'thread', desc: '拾うと帰還の糸が1本増える' },
+
     // stack: 束で落ちている数（最小, 最大）。同じものは1枠にまとめて持てる
     stone: { name: '投げ石', cat: 'throw', throwDmg: 6, stack: [3, 6], desc: '投げると6前後のダメージ。装備すると「投げる」ボタンで投げられる' },
   },
@@ -108,6 +141,7 @@ const DATA = {
     throw:  { label: '投げ物', symbol: '石', color: '#9a9a9a' },
     time:   { label: '砂時計', symbol: '砂', color: '#d9b46a' },
     drink:  { label: '飲み物', symbol: '飲', color: '#6ab0d9' },
+    thread: { label: '糸',     symbol: '糸', color: '#d4485f' },
   },
 
   // 未識別のときの呼び名（種類の数より多めに用意しておく）
@@ -131,6 +165,7 @@ const DATA = {
     cave: {
       name: '村はずれの洞窟',
       floors: 10,
+      threads: 1,           // 最初に持っている帰還の糸の本数
       enemyStart: [3, 5],   // 階に着いたときの敵の数（最小, 最大）
       enemyMax: 8,          // 1つの階にいられる敵の最大数
       spawnEvery: 40,       // 何ターンごとに敵が1体湧くか
@@ -159,6 +194,7 @@ const DATA = {
         { id: 'sand_big',        from: 3, to: 10, weight: 2 },
         { id: 'sand_cracked',    from: 1, to: 10, weight: 2 },
         { id: 'energy',          from: 1, to: 10, weight: 4 },
+        { id: 'thread',          from: 2, to: 10, weight: 1 },
         { id: 'stone',           from: 1, to: 10, weight: 5 },
         { id: 'sword_copper',    from: 1, to: 6,  weight: 2 },
         { id: 'sword_iron',      from: 5, to: 10, weight: 1 },
