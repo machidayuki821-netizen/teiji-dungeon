@@ -1,5 +1,5 @@
 // ============================================================
-// game.js ― ゲームの仕組み（段階③：拾う）
+// game.js ― ゲームの仕組み（段階④：帰る）
 // ============================================================
 'use strict';
 
@@ -30,7 +30,8 @@ const state = {
   identified: new Set(), // 識別済みのアイテムID
   looks: {},        // 未識別のときの見た目 {アイテムID: '青い草'}
   bagOpen: false,   // 持ち物画面を開いているか
-  bagMode: 'normal',// normal=通常 / identify=識別するアイテムを選ぶ
+  bagMode: 'normal',// normal=通常 / identify=識別の巻物 / oracle=神託（帰還の糸）
+  sensed: false,    // 危険察知を使った階か（敵の位置が分かる）
   bagSel: null,     // 選んでいるアイテムのuid
   popups: [],       // ダメージ数字などの表示
   logs: [],
@@ -96,6 +97,18 @@ function identify(id) {
   state.identified.add(id);
   return true;
 }
+// 時刻の表示（24時を過ぎたら 25:10 のように表示する）
+function formatClock(min) {
+  const h = Math.floor(min / 60), m = min % 60;
+  return `${h}:${String(m).padStart(2, '0')}`;
+}
+function clockPhase() {
+  const c = state.player.clock, C = DATA.clock;
+  if (c >= C.lastTrain) return 'late';
+  if (c >= C.overtime) return 'overtime';
+  return 'work';
+}
+
 // 装備込みの攻撃力・防御力
 function playerAtk() {
   const p = state.player;
@@ -218,6 +231,7 @@ function generateFloor() {
   state.enemies = [];
   state.floorItems = [];
   state.popups = [];
+  state.sensed = false;
   const p = state.player;
   p.x = p.rx = start.x;
   p.y = p.ry = start.y;
@@ -495,16 +509,37 @@ function endTurn() {
     if (p.hidden === 0) addLog('隠れ身の効果が切れた。');
   }
 
-  // 自然回復
-  if (p.hp < p.maxHp) {
-    p.regen += p.maxHp * DATA.player.regenRate;
+  // 時計を進める（17:00と24:00でお知らせ）
+  const C = DATA.clock;
+  const before = p.clock;
+  p.clock += C.perTurn;
+  if (before < C.overtime && p.clock >= C.overtime) addLog('17:00になった。定時を過ぎた……（自然回復が止まる）');
+  if (before < C.lastTrain && p.clock >= C.lastTrain) addLog('終電がなくなった……。体力が削られていく。');
+
+  // エナジードリンクの効果時間
+  if (p.boost > 0) {
+    p.boost--;
+    if (p.boost === 0) addLog('エナジードリンクの効果が切れた。');
+  }
+
+  // 自然回復：勤務時間中だけ。エナジードリンク中は2倍で、残業中も回復する
+  const phase = clockPhase();
+  const canRegen = phase === 'work' || p.boost > 0;
+  if (canRegen && p.hp < p.maxHp) {
+    p.regen += p.maxHp * DATA.player.regenRate * (p.boost > 0 ? 2 : 1);
     if (p.regen >= 1) {
       const heal = Math.floor(p.regen);
       p.regen -= heal;
       p.hp = Math.min(p.maxHp, p.hp + heal);
     }
-  } else {
+  } else if (p.hp >= p.maxHp) {
     p.regen = 0;
+  }
+
+  // 終電後は毎ターンHPが減る
+  if (phase === 'late') {
+    p.hp = Math.max(0, p.hp - C.drain);
+    if (p.hp <= 0) state.deathCause = '終電を逃し、力尽きた';
   }
 
   // 敵の行動
@@ -636,6 +671,7 @@ function enemyAttack(e) {
   }
   const dmg = calcDamage(def.atk, playerDef());
   p.hp = Math.max(0, p.hp - dmg);
+  if (p.hp <= 0) state.deathCause = `${def.name}にやられた`;
   p.hurt = 1;
   addPopup(p.x, p.y, String(dmg), DATA.colors.dmgToPlayer);
   addLog(`${def.name}の攻撃。${dmg}のダメージ。`);
@@ -661,11 +697,7 @@ function askStairs() {
 function descend() {
   const dungeon = DATA.dungeons[state.dungeonId];
   if (state.floor >= dungeon.floors) {
-    showOverlay(
-      '生還！',
-      `${dungeon.name}を踏破した。<br>Lv${state.player.level}　${state.turn}ターン`,
-      [{ label: 'もう一度潜る', primary: true, onClick: startDungeon }]
-    );
+    survive('踏破');
     return;
   }
   state.floor++;
@@ -684,6 +716,9 @@ function createPlayer() {
     weapon: null, shield: null, // 装備中のアイテム
     quiver: null,               // 装備中の投げ物（武器・盾とは別枠）
     hidden: 0,                  // 隠れ身の残りターン
+    clock: DATA.clock.start,    // 現在時刻（0時からの分）
+    boost: 0,                   // エナジードリンクの残りターン
+    threads: DATA.threads.count,// 帰還の糸の残り本数
   };
 }
 
@@ -694,21 +729,125 @@ function startDungeon() {
   state.logs = [];
   state.player = createPlayer();
   state.bag = [];
+  state.deathCause = '';
   setupUnknownNames();
   generateFloor();
   addLog(`${DATA.dungeons[state.dungeonId].name}に入った。`);
   updateUI();
 }
 
+// 力尽きた：糸が残っていれば復活を確認する
 function onDeath() {
   releaseStick();
   closeBag();
+  const p = state.player;
+  if (p.threads > 0) {
+    showOverlay(
+      '力尽きそうだ……',
+      `<div class="aria">アリア「${DATA.aria.revive}」</div>帰還の糸を使って復活しますか？（残り${p.threads}本）`,
+      [
+        { label: '糸を使って復活', primary: true, onClick: () => watchAd(() => {
+          p.threads--;
+          p.hp = p.maxHp;
+          p.hurt = 0;
+          addLog('帰還の糸が光り、立ち上がった！');
+          addPopup(p.x, p.y, '復活', DATA.colors.heal);
+          updateUI();
+        }, finalDeath) },
+        { label: 'あきらめる', onClick: finalDeath },
+      ]
+    );
+    return;
+  }
+  finalDeath();
+}
+
+function finalDeath() {
+  hideOverlay();
   const dungeon = DATA.dungeons[state.dungeonId];
+  const p = state.player;
   addLog('力尽きた……');
   showOverlay(
     '力尽きた……',
-    `${dungeon.name} ${state.floor}階<br>Lv${state.player.level}　${state.turn}ターン`,
+    `${state.deathCause || '力尽きた'}。<br>${dungeon.name} ${state.floor}階　${formatClock(p.clock)}<br>Lv${p.level}　持ち物はすべて失った`,
     [{ label: 'もう一度潜る', primary: true, onClick: startDungeon }]
+  );
+}
+
+// 生還：帰ってきた時刻で評価する
+function survive(how) {
+  releaseStick();
+  closeBag();
+  hideOverlay();
+  updateUI();
+  const dungeon = DATA.dungeons[state.dungeonId];
+  const p = state.player;
+  const C = DATA.clock;
+  let title, line;
+  if (p.clock <= C.overtime) { title = '定時退社！'; line = DATA.aria.ontime; }
+  else if (p.clock < C.lastTrain) {
+    const over = p.clock - C.overtime;
+    title = `残業 ${Math.floor(over / 60)}時間${over % 60}分`;
+    line = DATA.aria.overtime;
+  } else { title = '終電を逃した……'; line = DATA.aria.late; }
+  showOverlay(
+    `生還！　${title}`,
+    `<div class="aria">アリア「${line}」</div>` +
+    `${dungeon.name} ${state.floor}階から${how === '踏破' ? '踏破して' : ''}帰還<br>` +
+    `帰還時刻 ${formatClock(p.clock)}　Lv${p.level}<br>持ち帰ったアイテム：${state.bag.length}個`,
+    [{ label: 'もう一度潜る', primary: true, onClick: startDungeon }]
+  );
+}
+
+// ============================================================
+// 帰還の糸（広告で使う命綱）
+// ============================================================
+// 広告を見る（試作では、ボタンを押すと見たことになる）
+function watchAd(onDone, onCancel) {
+  showOverlay(
+    '帰還の糸',
+    `<div class="aria">アリア「${DATA.aria.thread}」</div><span class="ad-note">（ここで広告が流れます）</span>`,
+    [
+      { label: '広告を見た（試作）', primary: true, onClick: () => { hideOverlay(); onDone(); } },
+      { label: 'やめる', onClick: () => { hideOverlay(); if (onCancel) onCancel(); } },
+    ]
+  );
+}
+
+function openThreadMenu() {
+  if (busy()) return;
+  const p = state.player;
+  if (p.threads <= 0) {
+    addLog('帰還の糸はもう残っていない。');
+    return;
+  }
+  releaseStick();
+  const hasUnknown = state.bag.some((x) => !isKnown(x.id));
+  const use = (fn) => () => { hideOverlay(); watchAd(() => { p.threads--; fn(); updateUI(); }); };
+  showOverlay(
+    '帰還の糸',
+    `どの力を借りますか？（残り${p.threads}本）`,
+    [
+      { label: '緊急脱出：持ち物を持って生還', primary: true, onClick: use(() => survive('脱出')) },
+      { label: '危険察知：地形・階段・敵が分かる', onClick: use(() => {
+        revealMap();
+        state.sensed = true;
+        addLog('糸が震え、この階の様子が分かった。');
+      }) },
+      { label: `時を戻す：時計を${DATA.threads.rewind / 60}時間戻す`, onClick: use(() => {
+        p.clock = Math.max(DATA.clock.start, p.clock - DATA.threads.rewind);
+        addLog(`時が巻き戻った。（${formatClock(p.clock)}）`);
+      }) },
+      { label: hasUnknown ? '神託：未識別のアイテムを1つ識別' : '神託：（識別するものがない）', dim: !hasUnknown, onClick: hasUnknown ? use(() => {
+        state.bagOpen = true;
+        state.bagMode = 'oracle';
+        state.bagSel = null;
+        renderBag();
+        $('bag').classList.remove('hidden');
+      }) : () => {} },
+      { label: 'やめる', onClick: hideOverlay },
+    ],
+    true
   );
 }
 
@@ -837,6 +976,10 @@ function useItem(item) {
       p.hidden = DATA.effects.hideTurns;
       state.enemies.forEach((e) => { e.alert = 0; });
       addLog('姿が見えにくくなった。');
+    } else if (def.effect === 'return') {
+      addLog('体が光に包まれた……');
+      survive('巻物');
+      return false;
     } else if (def.effect === 'identify') {
       // 識別するアイテムを選ぶ画面に切り替える（ターンは選んだ後に使う）
       const unknown = state.bag.filter((x) => !isKnown(x.id));
@@ -849,6 +992,28 @@ function useItem(item) {
       renderBag();
       return false;
     }
+    return true;
+  }
+
+  if (def.cat === 'time') {
+    removeFromBag(item);
+    const old = p.clock;
+    if (def.resetStart) p.clock = DATA.clock.start;
+    else p.clock = Math.max(DATA.clock.start, p.clock - def.rewind);
+    addLog(`${def.name}を使った。時が巻き戻る……（${formatClock(old)} → ${formatClock(p.clock)}）`);
+    if (def.damage) {
+      p.hp = Math.max(1, p.hp - def.damage);
+      p.hurt = 1;
+      addPopup(p.x, p.y, String(def.damage), DATA.colors.dmgToPlayer);
+      addLog(`ひびから砂がこぼれ、${def.damage}のダメージ。`);
+    }
+    return true;
+  }
+
+  if (def.cat === 'drink') {
+    removeFromBag(item);
+    p.boost = def.boostTurns;
+    addLog(`${def.name}を飲んだ。体の奥から力がわいてくる！`);
     return true;
   }
   return false;
@@ -968,7 +1133,8 @@ function bagActionDone(usedTurn) {
 }
 
 function renderBag() {
-  const identifyMode = state.bagMode === 'identify';
+  const oracleMode = state.bagMode === 'oracle';
+  const identifyMode = state.bagMode === 'identify' || oracleMode;
   $('bag-title').textContent = identifyMode ? 'どれを識別する？' : `持ち物（${state.bag.length}/${DATA.bag.size}）`;
   $('bag-stats').textContent = `攻撃 ${playerAtk()}　防御 ${playerDef()}`;
 
@@ -991,7 +1157,7 @@ function renderBag() {
       if (identifyMode) {
         identify(item.id);
         addLog(`${state.looks[item.id]}は${def.name}だった！`);
-        bagActionDone(true);
+        bagActionDone(!oracleMode); // 神託はターンを使わない
         return;
       }
       state.bagSel = item.uid;
@@ -1015,7 +1181,8 @@ function renderBag() {
 
   if (identifyMode) {
     desc.textContent = '識別したいアイテムを選んでください。';
-    addBtn('やめる', () => { addLog('識別をやめた。'); bagActionDone(true); });
+    // 神託は糸をすでに使っているので、やめられない
+    if (!oracleMode) addBtn('やめる', () => { addLog('識別をやめた。'); bagActionDone(true); });
     return;
   }
   if (!sel) {
@@ -1031,7 +1198,14 @@ function renderBag() {
   } else if (def.cat === 'herb') {
     addBtn('食べる', () => { const t = useItem(sel); if (state.bagMode !== 'identify') bagActionDone(t); }, true);
   } else if (def.cat === 'scroll') {
-    addBtn('読む', () => { const t = useItem(sel); if (state.bagMode !== 'identify') bagActionDone(t); }, true);
+    addBtn('読む', () => {
+      const t = useItem(sel);
+      if (state.bagMode === 'identify') return; // 識別の選択画面に切り替わった
+      if (state.locked) { closeBag(); return; }  // 帰還の巻物で生還した
+      bagActionDone(t);
+    }, true);
+  } else if (def.cat === 'time' || def.cat === 'drink') {
+    addBtn(def.cat === 'drink' ? '飲む' : '使う', () => { const t = useItem(sel); bagActionDone(t); }, true);
   }
   addBtn('投げる', () => { throwItem(sel); bagActionDone(true); });
   addBtn('置く', () => { const t = dropItem(sel); bagActionDone(t); });
@@ -1055,7 +1229,14 @@ function updateUI() {
   const p = state.player;
   $('dungeon-name').textContent = DATA.dungeons[state.dungeonId].name;
   $('floor').textContent = `${state.floor}F`;
-  $('turn').textContent = `${state.turn}ターン`;
+  // 時計と帰還の糸
+  const clock = $('clock');
+  clock.textContent = `🕘 ${formatClock(p.clock)}`;
+  const phase = clockPhase();
+  clock.classList.toggle('overtime', phase === 'overtime');
+  clock.classList.toggle('late', phase === 'late');
+  $('threads').textContent = '🧵'.repeat(p.threads) + '・'.repeat(DATA.threads.count - p.threads);
+  $('cond').textContent = (p.boost > 0 ? '⚡' : '') + (p.hidden > 0 ? '👻' : '');
   $('lv').textContent = `Lv${p.level}`;
   $('hp').textContent = `HP ${p.hp}/${p.maxHp}`;
   const ratio = p.hp / p.maxHp;
@@ -1077,8 +1258,9 @@ function updateUI() {
 }
 
 // メッセージ画面を出す。buttons は [{ label, onClick, primary }] の配列
-function showOverlay(title, text, buttons) {
+function showOverlay(title, text, buttons, vertical) {
   state.locked = true;
+  $('ov-buttons').classList.toggle('vertical', !!vertical);
   $('ov-title').textContent = title;
   $('ov-text').innerHTML = text;
   const box = $('ov-buttons');
@@ -1087,6 +1269,7 @@ function showOverlay(title, text, buttons) {
     const btn = document.createElement('button');
     btn.textContent = b.label;
     if (b.primary) btn.classList.add('primary');
+    if (b.dim) btn.classList.add('dim');
     btn.dataset.index = i;
     btn.onclick = b.onClick;
     box.appendChild(btn);
@@ -1170,15 +1353,18 @@ function render() {
     drawFloorItem(f, f.x * ts - camX, f.y * ts - camY, ts, !state.visible[idx(f.x, f.y)]);
   }
 
-  // 敵（見えている敵だけ）
+  // 敵（見えている敵だけ。危険察知を使った階では全部、見えない敵は薄く表示）
   for (const e of state.enemies) {
-    if (!state.visible[idx(e.x, e.y)]) continue;
+    const seen = state.visible[idx(e.x, e.y)];
+    if (!seen && !state.sensed) continue;
+    ctx.globalAlpha = seen ? 1 : 0.5;
     let ox = 0, oy = 0;
     if (e.lunge > 0 && e.lungeDir >= 0) {
       ox = DIRS[e.lungeDir][0] * e.lunge * ts * 0.25;
       oy = DIRS[e.lungeDir][1] * e.lunge * ts * 0.25;
     }
     drawEnemy(e, e.rx * ts - camX + ox, e.ry * ts - camY + oy, ts);
+    ctx.globalAlpha = 1;
   }
 
   // 主人公
@@ -1321,7 +1507,7 @@ function drawMiniMap(w, h) {
   }
   ctx.fillStyle = C.miniEnemy;
   for (const e of state.enemies) {
-    if (!state.visible[idx(e.x, e.y)]) continue;
+    if (!state.visible[idx(e.x, e.y)] && !state.sensed) continue;
     ctx.beginPath();
     ctx.arc(ox + (e.x + 0.5) * s, oy + (e.y + 0.5) * s, Math.max(2, s * 0.6), 0, Math.PI * 2);
     ctx.fill();
@@ -1511,10 +1697,11 @@ onPress('btn-action', doAction);
 onPress('btn-turn', () => setTurnMode(!state.turnMode));
 onPress('btn-item', openBag);
 onPress('btn-throw', quickThrow);
+onPress('threads', openThreadMenu);
 // 持ち物画面の外側（暗い部分）を触ったら閉じる
 $('bag').addEventListener('pointerdown', (e) => {
   if (e.target.id !== 'bag') return;
-  if (state.bagMode === 'identify') return; // 識別の選択中は閉じない
+  if (state.bagMode !== 'normal') return; // 識別・神託の選択中は閉じない
   closeBag();
 });
 onPress('btn-mini', () => setShowMap(!state.showMini));
@@ -1525,7 +1712,7 @@ onPress('btn-swap', () => {
 
 // ============================================================
 // 操作：キーボード（PCでの確認用）
-// 矢印キー / テンキー / Q W E A D Z X C で8方向、スペースで決定、Mで地図、Iで持ち物、Tで投げる
+// 矢印キー / テンキー / Q W E A D Z X C で8方向、スペースで決定、Mで地図、Iで持ち物、Tで投げる、Rで帰還の糸
 // Shiftを押しながら方向キーで、向きだけ変える
 // ============================================================
 const KEY_DIRS = {
@@ -1534,21 +1721,22 @@ const KEY_DIRS = {
   d: 0, c: 1, x: 2, z: 3, a: 4, q: 5, w: 6, e: 7,
 };
 window.addEventListener('keydown', (e) => {
-  // メッセージ画面：Enter/スペースで1つ目のボタン、Escで2つ目のボタン
+  // メッセージ画面：Enter/スペースで1つ目のボタン、Escで最後のボタン（やめる・そのまま）
   if (state.locked) {
     const btns = $('ov-buttons').querySelectorAll('button');
     if ((e.key === 'Enter' || e.key === ' ') && btns[0]) { e.preventDefault(); btns[0].click(); }
-    if (e.key === 'Escape' && btns[1]) btns[1].click();
+    if (e.key === 'Escape' && btns.length > 1) btns[btns.length - 1].click();
     return;
   }
   // 持ち物画面：Escで閉じる
   if (state.bagOpen) {
-    if (e.key === 'Escape' && state.bagMode !== 'identify') closeBag();
+    if (e.key === 'Escape' && state.bagMode === 'normal') closeBag();
     return;
   }
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k === 'i') { openBag(); return; }
   if (k === 't') { quickThrow(); return; }
+  if (k === 'r') { openThreadMenu(); return; }
   if (k in KEY_DIRS) {
     e.preventDefault();
     if (e.shiftKey) turnPlayer(KEY_DIRS[k]);
