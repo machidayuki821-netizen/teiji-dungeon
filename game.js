@@ -72,7 +72,16 @@ function busy() { return state.locked || state.bagOpen; }
 
 // ---- アイテム関連の便利関数 ----
 function itemDef(item) { return DATA.items[item.id]; }
-function newItem(id) { return { uid: nextItemUid++, id }; }
+function newItem(id) {
+  const def = DATA.items[id];
+  const item = { uid: nextItemUid++, id };
+  if (def.stack) item.count = rand(def.stack[0], def.stack[1]); // 束で持てるもの
+  return item;
+}
+// 表示名（束の数つき）
+function itemLabel(item) {
+  return itemName(item) + (item.count ? `（${item.count}）` : '');
+}
 function isKnown(id) {
   const cat = DATA.items[id].cat;
   if (!DATA.unknownNames[cat]) return true;            // 武器・盾・投げ物は最初から分かる
@@ -673,6 +682,7 @@ function createPlayer() {
     hp: P.hp, maxHp: P.hp, atk: P.atk, def: P.def,
     regen: 0, lunge: 0, hurt: 0,
     weapon: null, shield: null, // 装備中のアイテム
+    quiver: null,               // 装備中の投げ物（武器・盾とは別枠）
     hidden: 0,                  // 隠れ身の残りターン
   };
 }
@@ -721,13 +731,23 @@ function pickUp() {
   const p = state.player;
   const f = floorItemAt(p.x, p.y);
   if (!f) return false;
+  // 束で持てるものは、同じものがあれば1枠にまとめる（持ち物がいっぱいでも拾える）
+  if (f.item.count) {
+    const same = state.bag.find((x) => x.id === f.item.id);
+    if (same) {
+      same.count += f.item.count;
+      state.floorItems = state.floorItems.filter((x) => x !== f);
+      addLog(`${itemLabel(f.item)}を拾った。`);
+      return true;
+    }
+  }
   if (state.bag.length >= DATA.bag.size) {
     addLog(`持ち物がいっぱいで、${itemName(f.item)}を拾えない。`);
     return false;
   }
   state.floorItems = state.floorItems.filter((x) => x !== f);
   state.bag.push(f.item);
-  addLog(`${itemName(f.item)}を拾った。`);
+  addLog(`${itemLabel(f.item)}を拾った。`);
   return true;
 }
 
@@ -736,18 +756,20 @@ function removeFromBag(item) {
   state.bag = state.bag.filter((x) => x !== item);
   if (p.weapon === item) p.weapon = null;
   if (p.shield === item) p.shield = null;
+  if (p.quiver === item) p.quiver = null;
 }
 
 function isEquipped(item) {
   const p = state.player;
-  return p.weapon === item || p.shield === item;
+  return p.weapon === item || p.shield === item || p.quiver === item;
 }
 
 // 装備する／外す
 function toggleEquip(item) {
   const p = state.player;
   const def = itemDef(item);
-  const slot = def.cat === 'weapon' ? 'weapon' : 'shield';
+  // 装備枠：武器・盾・投げ物（投げ物は武器・盾とは別枠）
+  const slot = def.cat === 'weapon' ? 'weapon' : def.cat === 'shield' ? 'shield' : 'quiver';
   if (p[slot] === item) {
     p[slot] = null;
     addLog(`${def.name}を外した。`);
@@ -851,7 +873,13 @@ function throwItem(item) {
   const p = state.player;
   const def = itemDef(item);
   const name = itemName(item);
-  removeFromBag(item);
+  // 束になっているものは1つだけ投げる
+  if (item.count && item.count > 1) {
+    item.count--;
+    item = { uid: nextItemUid++, id: item.id, count: 1 };
+  } else {
+    removeFromBag(item);
+  }
   const [dx, dy] = DIRS[p.dir];
   let x = p.x, y = p.y;
   for (let i = 0; i < DATA.bag.throwRange; i++) {
@@ -900,6 +928,18 @@ function dropItem(item) {
   return true;
 }
 
+// 「投げる」ボタン：装備中の投げ物を、向いている方向に投げる
+function quickThrow() {
+  if (busy()) return;
+  const p = state.player;
+  if (!p.quiver) {
+    addLog('投げ物を装備していない。（道具から装備できます）');
+    return;
+  }
+  throwItem(p.quiver);
+  endTurn();
+}
+
 // ============================================================
 // 持ち物画面
 // ============================================================
@@ -945,7 +985,7 @@ function renderBag() {
     row.className = 'item-row' + (state.bagSel === item.uid ? ' selected' : '');
     row.innerHTML =
       `<span class="item-icon" style="background:${cat.color}">${cat.symbol}</span>` +
-      `<span class="item-name">${itemName(item)}</span>` +
+      `<span class="item-name${isKnown(item.id) ? '' : ' unknown'}">${itemLabel(item)}</span>` +
       (isEquipped(item) ? '<span class="item-equip">装備中</span>' : '');
     row.onclick = () => {
       if (identifyMode) {
@@ -986,7 +1026,7 @@ function renderBag() {
 
   const def = itemDef(sel);
   desc.textContent = isKnown(sel.id) ? def.desc : 'まだ正体が分からない。';
-  if (def.cat === 'weapon' || def.cat === 'shield') {
+  if (def.cat === 'weapon' || def.cat === 'shield' || def.cat === 'throw') {
     addBtn(isEquipped(sel) ? '外す' : '装備', () => { toggleEquip(sel); bagActionDone(true); }, true);
   } else if (def.cat === 'herb') {
     addBtn('食べる', () => { const t = useItem(sel); if (state.bagMode !== 'identify') bagActionDone(t); }, true);
@@ -1029,6 +1069,11 @@ function updateUI() {
   else if (onStairs()) label = '降りる';
   else if (floorItemAt(p.x, p.y)) label = '拾う';
   $('btn-action').textContent = label;
+
+  // 投げるボタン：装備中の投げ物の残り数を表示
+  const tb = $('btn-throw');
+  tb.textContent = p.quiver ? `投げる×${p.quiver.count || 1}` : '投げる';
+  tb.classList.toggle('dim', !p.quiver);
 }
 
 // メッセージ画面を出す。buttons は [{ label, onClick, primary }] の配列
@@ -1465,6 +1510,7 @@ function setShowMap(on) {
 onPress('btn-action', doAction);
 onPress('btn-turn', () => setTurnMode(!state.turnMode));
 onPress('btn-item', openBag);
+onPress('btn-throw', quickThrow);
 // 持ち物画面の外側（暗い部分）を触ったら閉じる
 $('bag').addEventListener('pointerdown', (e) => {
   if (e.target.id !== 'bag') return;
@@ -1479,7 +1525,7 @@ onPress('btn-swap', () => {
 
 // ============================================================
 // 操作：キーボード（PCでの確認用）
-// 矢印キー / テンキー / Q W E A D Z X C で8方向、スペースで決定、Mで地図、Iで持ち物
+// 矢印キー / テンキー / Q W E A D Z X C で8方向、スペースで決定、Mで地図、Iで持ち物、Tで投げる
 // Shiftを押しながら方向キーで、向きだけ変える
 // ============================================================
 const KEY_DIRS = {
@@ -1502,6 +1548,7 @@ window.addEventListener('keydown', (e) => {
   }
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k === 'i') { openBag(); return; }
+  if (k === 't') { quickThrow(); return; }
   if (k in KEY_DIRS) {
     e.preventDefault();
     if (e.shiftKey) turnPlayer(KEY_DIRS[k]);
