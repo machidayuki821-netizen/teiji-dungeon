@@ -35,7 +35,7 @@ const DATA = {
     atk: 4,             // 攻撃力
     def: 0,             // 防御力
     hitRate: 0.92,      // 攻撃が当たる確率
-    regenRate: 0.012,   // 1ターンごとに回復する量（最大HPに対する割合）
+    regenRate: 0.006,   // 1ターンごとに回復する量（最大HPに対する割合）。0.006で最大HP30なら約5ターンに1回復
     // レベルアップに必要な累計経験値（左から Lv2, Lv3, Lv4 ...）
     expTable: [10, 25, 45, 70, 100, 140, 190, 250, 320, 400, 500, 620],
     // レベルが1上がるごとの上昇量
@@ -71,7 +71,8 @@ const DATA = {
     scroll_sleep:    { name: '眠りの巻物',   cat: 'scroll', effect: 'sleep',    desc: '見えている敵を眠らせる' },
     scroll_hide:     { name: '隠れ身の巻物', cat: 'scroll', effect: 'hide',     desc: 'しばらく敵に見つからなくなる' },
 
-    stone: { name: '投げ石', cat: 'throw', throwDmg: 6, desc: '投げると6前後のダメージ' },
+    // stack: 束で落ちている数（最小, 最大）。同じものは1枠にまとめて持てる
+    stone: { name: '投げ石', cat: 'throw', throwDmg: 6, stack: [3, 6], desc: '投げると6前後のダメージ。装備すると「投げる」ボタンで投げられる' },
   },
 
   // 種類ごとの表示（仮素材）
@@ -164,5 +165,6 @@ const DATA = {
     dmgToEnemy: '#ffffff',
     dmgToPlayer: '#ff6b6b',
     heal: '#7dff9a',
+    unknownName: '#ffd84a', // 持ち物画面での未識別アイテムの文字色
   },
 };
