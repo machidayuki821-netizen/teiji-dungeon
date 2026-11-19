@@ -2,7 +2,7 @@
 // game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '7.1'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.2'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -2314,6 +2314,49 @@ function vSmith(panel) {
 }
 
 // ============================================================
+// タイトル画面
+// ============================================================
+function titleOpen() { return !$('title').classList.contains('hidden'); }
+function openTitle() {
+  const T = DATA.title;
+  $('title-logo').src = T.logo;
+  const cast = $('title-cast');
+  cast.innerHTML = '';
+  T.cast.forEach((c, i) => {
+    const el = document.createElement('div');
+    el.className = `t-chara idle-${c.idle || 'breathe'}`;
+    el.style.left = `${c.x}%`;
+    el.style.top = `${c.y}%`;
+    el.style.width = `${c.size}%`;
+    el.style.zIndex = String(Math.round(c.y));
+    el.style.animationDelay = `0s, ${-((i * 0.37) % 3)}s`;
+    const inner = document.createElement('div');
+    inner.className = 't-img';
+    if (c.hero) {
+      inner.style.backgroundImage = `url(${DATA.view.hero.down})`;
+      inner.style.backgroundSize = '100% 100%';
+    } else {
+      // 敵の絵は5コマ並び。1コマ目（正面）を使う
+      inner.style.backgroundImage = `url(${DATA.view.enemy.path.replace('{sprite}', c.sprite)})`;
+      inner.style.backgroundSize = '500% 100%';
+      inner.style.backgroundPosition = '0 0';
+    }
+    if (c.flip) inner.style.transform = 'scaleX(-1)';
+    if (c.tint) inner.style.filter = c.tint;
+    el.appendChild(inner);
+    cast.appendChild(el);
+  });
+  $('title').classList.remove('hidden', 'leaving');
+}
+function closeTitle() {
+  const t = $('title');
+  if (t.classList.contains('leaving')) return;
+  t.classList.add('leaving');
+  setTimeout(() => t.classList.add('hidden'), 450);
+}
+$('title').addEventListener('pointerdown', (e) => { e.preventDefault(); closeTitle(); });
+
+// ============================================================
 // 画面表示（UI部分）
 // ============================================================
 function addLog(msg) {
@@ -3259,6 +3302,7 @@ window.addEventListener('keydown', (e) => {
     if (kk in KEY_DIRS) { e.preventDefault(); moveOvSel(KEY_DIRS[kk]); }
     return;
   }
+  if (titleOpen()) { if (e.key === 'Enter' || e.key === ' ') closeTitle(); return; }
   if (state.inVillage) return; // 村ではマウス・タッチで操作
   // 持ち物画面：Escで閉じる
   if (state.bagOpen) {
@@ -3292,4 +3336,5 @@ loadSave();
 for (const def of Object.values(DATA.enemies)) enemySheet(def);
 startDungeon();   // 村の後ろに表示しておく迷宮（描画のため）
 openVillage();
+openTitle();
 requestAnimationFrame(frame);
