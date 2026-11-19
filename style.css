@@ -333,3 +333,103 @@ button.on {
   border-color: #8b1e32;
   font-weight: bold;
 }
+
+/* 選択肢が多いとき（遺品回収など）はスクロールできるようにする */
+#ov-buttons.vertical { max-height: 55vh; overflow-y: auto; touch-action: pan-y; }
+
+/* ---- 村 ---- */
+#village {
+  position: fixed;
+  inset: 0;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: calc(10px + env(safe-area-inset-top)) 12px calc(14px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: linear-gradient(#232031, #15131b);
+  z-index: 9;
+}
+#village.hidden { display: none; }
+#village .v-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 18px;
+  font-weight: bold;
+  color: #e8c35a;
+}
+#v-tony { font-size: 16px; color: #f2c94c; }
+#v-revival {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+  background: #1f1c27;
+  border: 1px solid #3a3446;
+  border-radius: 10px;
+}
+#v-revival .stars { color: #f2c94c; letter-spacing: 2px; }
+#v-revival button { font-size: 13px; padding: 8px; }
+#v-facilities {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+#v-facilities button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0;
+  font-size: 12px;
+}
+#v-facilities .v-icon { font-size: 22px; }
+#v-msg { min-height: 1.4em; font-size: 13px; color: #ffd84a; }
+#v-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  touch-action: pan-y;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#v-panel .aria {
+  padding: 10px 12px;
+  font-size: 14px;
+  background: #2a2533;
+  border-left: 3px solid #8b1e32;
+  border-radius: 6px;
+}
+.v-note { font-size: 14px; line-height: 1.7; color: #ccc; }
+.v-note.small { font-size: 12px; color: #aaa; }
+.v-go { margin-top: 8px; padding: 18px 0; font-size: 18px; }
+.v-head2 { margin-top: 6px; font-size: 12px; color: #aaa; }
+.v-list { display: flex; flex-direction: column; gap: 4px; }
+.v-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #1f1c27;
+  border: 1px solid #2f2a3a;
+  border-radius: 8px;
+}
+.v-row .item-name { flex: 1; }
+.v-row .v-price { font-size: 12px; color: #f2c94c; }
+.v-row button { padding: 6px 10px; font-size: 13px; }
+.v-tabs { display: flex; gap: 6px; }
+.v-tabs button { flex: 1; padding: 8px 0; }
+
+/* ---- バージョン表示（右下） ---- */
+#version {
+  position: fixed;
+  right: 4px;
+  bottom: calc(2px + env(safe-area-inset-bottom));
+  font-size: 10px;
+  color: rgba(255,255,255,0.35);
+  pointer-events: none;
+  z-index: 20;
+}
