@@ -3,7 +3,7 @@
 // 数値の調整は基本的にこのファイルだけで行う
 // ============================================================
 const DATA = {
-  version: '7.3',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
+  version: '7.4',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
 
   // テスト用（本番では false にする）
   debug: {
@@ -33,6 +33,16 @@ const DATA = {
       side: 'img/hero_side.png',
       diag: 'img/hero_diag.png',
       updiag: 'img/hero_updiag.png', // 斜め上（左上向き。右上は左右反転）
+      // コマ送り版スプライト（各8コマを横に並べた画像。読み込めなければ上の1枚絵を使う）
+      // コマの並び: [待機, 歩き1, 歩き2, 歩き3, 攻撃, やられ, 倒れる, 待機2]
+      sheets: {
+        down: 'img/hero_anim_down.png',
+        up: 'img/hero_anim_up.png',
+        side: 'img/hero_anim_side.png',
+        diag: 'img/hero_anim_diag.png',
+        updiag: 'img/hero_anim_updiag.png',
+        idleSec: 1.6, // 待機コマ（待機⇔待機2）の切り替え間隔（秒）
+      },
       size: 1.2,     // 1マスに対する絵の大きさ
       hop: 0.12,     // 歩いたときに跳ねる高さ（1マスに対する割合）。0で跳ねない
       tilt: 0.12,    // 歩いたときに左右に傾く角度（0.12で約7度）。1歩ごとに左右が入れ替わる

@@ -2,7 +2,7 @@
 // game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '7.3'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.4'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -2941,6 +2941,28 @@ for (const key of ['down', 'up', 'side', 'diag', 'updiag']) {
   img.src = DATA.view.hero[key];
   heroImg[key] = img;
 }
+
+// コマ送り版スプライト（方向ごとに8コマを横に並べた画像）
+const heroSheet = {};
+if (DATA.view.hero.sheets) {
+  for (const key of ['down', 'up', 'side', 'diag', 'updiag']) {
+    const img = new Image();
+    img.src = DATA.view.hero.sheets[key];
+    heroSheet[key] = img;
+  }
+}
+// 今の状態から使うコマ番号を決める（0=待機 1〜3=歩き 4=攻撃 5=やられ 6=倒れる 7=待機2）
+function heroAnimFrame(p, hurt) {
+  if (p.hp <= 0) return 6;
+  if (p.atkT) return p.atkT < 0.7 ? 4 : 0;
+  if (hurt > 0.45) return 5;
+  if (p.hop > 0) {
+    const seq = [1, 2, 3, 2];
+    return seq[Math.min(3, Math.floor((1 - p.hop) * 4))];
+  }
+  const sec = (DATA.view.hero.sheets && DATA.view.hero.sheets.idleSec) || 1.6;
+  return Math.floor(performance.now() / (sec * 1000)) % 2 === 0 ? 0 : 7;
+}
 const tintCanvas = document.createElement('canvas');
 const tintCtx = tintCanvas.getContext('2d');
 
@@ -2952,8 +2974,12 @@ function heroReady() {
 function drawHeroSprite(sx, sy, ts, dir, hurt) {
   const [key, flip] = HERO_FRAMES[dir];
   const img = heroImg[key];
+  // コマ送り版が読めていれば、そちらを使う（歩き・攻撃などのコマが切り替わる）
+  const sheet = heroSheet[key];
+  const useAnim = !!(sheet && sheet.complete && sheet.naturalWidth > 0);
+  const frame = useAnim ? heroAnimFrame(state.player, hurt) : 0;
   const size = ts * DATA.view.hero.size;
-  const hop = Math.sin(state.player.hop * Math.PI) * ts * DATA.view.hero.hop;
+  const hop = useAnim ? 0 : Math.sin(state.player.hop * Math.PI) * ts * DATA.view.hero.hop;
   const x = sx + (ts - size) / 2;
   const y = sy + ts - size + ts * 0.05 - hop;
 
@@ -2971,7 +2997,8 @@ function drawHeroSprite(sx, sy, ts, dir, hurt) {
   tintCtx.clearRect(0, 0, px, px);
   tintCtx.globalCompositeOperation = 'source-over';
   if (flip) { tintCtx.translate(px, 0); tintCtx.scale(-1, 1); }
-  tintCtx.drawImage(img, 0, 0, px, px);
+  if (useAnim) tintCtx.drawImage(sheet, frame * 256, 0, 256, 256, 0, 0, px, px);
+  else tintCtx.drawImage(img, 0, 0, px, px);
   tintCtx.setTransform(1, 0, 0, 1, 0, 0);
   if (hurt > 0) {
     tintCtx.globalCompositeOperation = 'source-atop';
@@ -2983,12 +3010,13 @@ function drawHeroSprite(sx, sy, ts, dir, hurt) {
   const H = DATA.view.hero;
   const footX = x + size / 2;
   const footY = y + size * 0.97;
-  // 歩いていないときは、待機の動き（呼吸）
-  const [ir, isx, isy] = swing > 0 ? [0, 1, 1] : idleMotion(H.idle, 0);
+  // 歩いていないときは、待機の動き（呼吸）。コマ送り版ではコマ自体が動くので揺らさない
+  const sw = useAnim ? 0 : swing;
+  const [ir, isx, isy] = (useAnim || swing > 0) ? [0, 1, 1] : idleMotion(H.idle, 0);
   ctx.save();
   ctx.translate(footX, footY);
-  ctx.rotate(swing * H.tilt * (state.player.stepSide || 1) + ir + attackLean(state.player));
-  ctx.scale((1 - swing * H.stretch * 0.5) * isx, (1 + swing * H.stretch) * isy);
+  ctx.rotate(sw * H.tilt * (state.player.stepSide || 1) + ir + attackLean(state.player));
+  ctx.scale((1 - sw * H.stretch * 0.5) * isx, (1 + sw * H.stretch) * isy);
   ctx.drawImage(tintCanvas, -size / 2, -size * 0.97, size, size);
   ctx.restore();
 
