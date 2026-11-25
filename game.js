@@ -2,7 +2,7 @@
 // game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '7.4'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.5'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -2957,8 +2957,10 @@ function heroAnimFrame(p, hurt) {
   if (p.atkT) return p.atkT < 0.7 ? 4 : 0;
   if (hurt > 0.45) return 5;
   if (p.hop > 0) {
-    const seq = [1, 2, 3, 2];
-    return seq[Math.min(3, Math.floor((1 - p.hop) * 4))];
+    // 1歩では「踏み出し→足そろえ」の2コマだけを使い、踏み出す足を1歩ごとに入れ替える
+    // （4コマ全部を1歩で回すと、足だけ高速で回転して見えるため）
+    const stride = (p.stepSide === 1) ? 1 : 3;
+    return (1 - p.hop) < 0.5 ? stride : 2;
   }
   const sec = (DATA.view.hero.sheets && DATA.view.hero.sheets.idleSec) || 1.6;
   return Math.floor(performance.now() / (sec * 1000)) % 2 === 0 ? 0 : 7;
