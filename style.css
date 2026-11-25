@@ -261,6 +261,12 @@ button.on {
   font-weight: bold;
   color: #222;
 }
+.item-icon-img {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
 .item-name { flex: 1; }
 .item-name.unknown { color: #ffd84a; }  /* 未識別アイテム */
 .item-equip { color: #e8c35a; font-weight: bold; font-size: 13px; }

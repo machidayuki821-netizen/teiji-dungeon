@@ -2,7 +2,7 @@
 // game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '7.2'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.3'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -126,6 +126,18 @@ function plusText(plus) { return plus > 0 ? `+${plus}` : plus < 0 ? `${plus}` : 
 function itemLabel(item) {
   if (item.id === 'tony') return `${item.amount}トニー`;
   return itemName(item) + plusText(item.plus || 0) + (item.count ? `（${item.count}）` : '');
+}
+// アイコンの <img>（item_icons.js が無い・該当が無いときは ''）
+function iconHTMLFor(item, known) {
+  if (typeof itemIconHTML !== 'function') return '';
+  return itemIconHTML(item.id, known, state.looks[item.id]);
+}
+// アイコン画像があれば <img>、無ければ今までの色つき文字アイコン
+function iconSpanFor(item, known) {
+  const img = iconHTMLFor(item, known);
+  if (img) return img;
+  const cat = DATA.itemCats[itemDef(item).cat];
+  return `<span class="item-icon" style="background:${cat.color}">${cat.symbol}</span>`;
 }
 function isKnown(id) {
   const cat = DATA.items[id].cat;
@@ -1797,11 +1809,10 @@ function renderBag() {
   }
   for (const item of items) {
     const def = itemDef(item);
-    const cat = DATA.itemCats[def.cat];
     const row = document.createElement('button');
     row.className = 'item-row' + (state.bagSel === item.uid ? ' selected' : '');
     row.innerHTML =
-      `<span class="item-icon" style="background:${cat.color}">${cat.symbol}</span>` +
+      iconSpanFor(item, isKnown(item.id)) +
       `<span class="item-name${isKnown(item.id) ? '' : ' unknown'}">${itemLabel(item)}</span>` +
       (isEquipped(item) ? '<span class="item-equip">装備中</span>' : '');
     row.onclick = () => {
@@ -2097,11 +2108,10 @@ function renderVillage() {
 // 一覧の1行（名前 + 右側のボタン）
 function vRow(list, x, btnLabel, onClick, dim, extra) {
   const def = DATA.items[x.id];
-  const cat = DATA.itemCats[def.cat];
   const row = document.createElement('div');
   row.className = 'v-row';
   row.innerHTML =
-    `<span class="item-icon" style="background:${cat.color}">${cat.symbol}</span>` +
+    iconSpanFor(x, !x.unk) +
     `<span class="item-name${x.unk ? ' unknown' : ''}">${storedName(x)}</span>` +
     (extra ? `<span class="v-price">${extra}</span>` : '');
   if (btnLabel) {
@@ -2885,8 +2895,17 @@ function idleMotion(kind, phase) {
   }
 }
 
-// 仮のアイテム：種類ごとの色の四角＋文字
+// 床のアイテム：アイコン画像で描く（読めない間は仮の四角＋文字）
 function drawFloorItem(f, sx, sy, ts, dim) {
+  const icon = (typeof itemIconImage === 'function')
+    ? itemIconImage(f.item.id, isKnown(f.item.id), state.looks[f.item.id]) : null;
+  if (icon && icon.complete && icon.naturalWidth > 0) {
+    const s = ts * 0.74;
+    ctx.globalAlpha = dim ? 0.5 : 1;
+    ctx.drawImage(icon, sx + (ts - s) / 2, sy + (ts - s) / 2, s, s);
+    ctx.globalAlpha = 1;
+    return;
+  }
   const cat = DATA.itemCats[itemDef(f.item).cat];
   const s = ts * 0.5;
   const x = sx + (ts - s) / 2, y = sy + (ts - s) / 2;
@@ -3330,6 +3349,7 @@ window.addEventListener('keydown', (e) => {
 // ============================================================
 if (loadSetting('swapControls')) $('app').classList.add('swapped');
 setShowMap(loadSetting('showMap'));
+if (typeof preloadItemIcons === 'function') preloadItemIcons();
 $('version').textContent = `game ${GAME_VERSION} / data ${DATA.version || '-'}`;
 loadSave();
 // 敵の絵を先に読み込んでおく（初めて出てきたときに、一瞬だけ丸が出ないように）

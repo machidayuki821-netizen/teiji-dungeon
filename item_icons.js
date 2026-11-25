@@ -1,143 +1,148 @@
 // ============================================================
 // item_icons.js v7.3 『異世界ダンジョンから定時で帰りたい』
-// アイテムアイコンの対応表と、先読み・描画ヘルパー（新規ファイル）
+// アイテムアイコンの対応表と、先読み・描画ヘルパー
 //
 //
-// 1) img/icons/ フォルダに、このファイルと一緒に渡したPNGを全部入れる
-// 2) index.html の game.js より前に1行追加する:
+// index.html で data.js の後、game.js の前に読み込む:
 // <script src="item_icons.js?v=7.3"></script>
-// 3) game.js 側では下の3関数を使う:
-// preloadItemIcons() … 起動時に1回呼ぶ（先読み）
-// drawItemIcon(ctx, item, x, y, size) … Canvas用（床のアイテム・持ち物）
-// itemIconHTML(item, size) … DOM用（持ち物リスト等）<img>文字列を返す
+// 画像は img/icons/ フォルダに入れる。
+//
+//
+// preloadItemIcons() … 起動時に1回（先読み）
+// itemIconImage(id, known, lookName) … Canvas用。Imageか null
+// itemIconHTML(id, known, lookName) … DOM用。<img>文字列か ''
+// id: アイテムID（data.js の DATA.items のキー）
+// known: 識別済みなら true
+// lookName: 未識別のときの見た目の名前（state.looks[id]）
 //
 //
 // 草と巻物は未識別の間、本当のアイコンを見せると正体がバレる。
-// そのため未識別のときは「見た目アイコン」(item_grass_lookN /
-// item_scroll_lookN) を返す。item.look に見た目番号（草1〜6、巻物1〜8）
-// が入っていればそれを使い、無ければ名前から決定的に1つ選ぶ。
-// 識別済み・持ち込み済みのものは今までどおり本当のアイコンを返す。
+// そのため未識別では「見た目アイコン」を返す。見た目の名前
+// （青い草・焦げた巻物など）ごとに決まったアイコンを使うので、
+// 名前と絵が食い違うことはない。
 // ============================================================
 
-const ITEM_ICONS = {
+const ITEM_ICONS_BY_ID = {
 // 武器
-"木刀": "img/icons/item_bokuto.png",
-"銅の剣": "img/icons/item_sword_copper.png",
-"鉄の剣": "img/icons/item_sword_iron.png",
-"鋼の剣": "img/icons/item_sword_steel.png",
-"社長の剣": "img/icons/item_sword_president.png",
-"錆びない剣": "img/icons/item_sword_stainless.png",
-"定時の剣": "img/icons/item_sword_teiji.png",
-"残業刀": "img/icons/item_katana_zangyo.png",
-"ハンコハンマー": "img/icons/item_hanko_hammer.png",
-"経費の剣": "img/icons/item_sword_keihi.png",
+bokuto: "img/icons/item_bokuto.png",
+sword_copper: "img/icons/item_sword_copper.png",
+sword_iron: "img/icons/item_sword_iron.png",
+sword_steel: "img/icons/item_sword_steel.png",
+sword_president: "img/icons/item_sword_president.png",
+sword_norust: "img/icons/item_sword_stainless.png",
+sword_teiji: "img/icons/item_sword_teiji.png",
+sword_zangyo: "img/icons/item_katana_zangyo.png",
+hammer_hanko: "img/icons/item_hanko_hammer.png",
+sword_keihi: "img/icons/item_sword_keihi.png",
 // 盾
-"木の盾": "img/icons/item_shield_wood.png",
-"鉄の盾": "img/icons/item_shield_iron.png",
-"鋼の盾": "img/icons/item_shield_steel.png",
-"社長の盾": "img/icons/item_shield_president.png",
-"静音の盾": "img/icons/item_shield_silent.png",
-"目覚まし時計の盾": "img/icons/item_shield_alarm.png",
-"アタッシュケースの盾": "img/icons/item_shield_attache.png",
-"クレーム返しの盾": "img/icons/item_shield_claim.png",
-"分厚いファイルの盾": "img/icons/item_shield_file.png",
-"有給の盾": "img/icons/item_shield_yukyu.png",
+shield_wood: "img/icons/item_shield_wood.png",
+shield_iron: "img/icons/item_shield_iron.png",
+shield_steel: "img/icons/item_shield_steel.png",
+shield_president: "img/icons/item_shield_president.png",
+shield_silent: "img/icons/item_shield_silent.png",
+shield_alarm: "img/icons/item_shield_alarm.png",
+shield_case: "img/icons/item_shield_attache.png",
+shield_claim: "img/icons/item_shield_claim.png",
+shield_file: "img/icons/item_shield_file.png",
+shield_paid: "img/icons/item_shield_yukyu.png",
 // 投げ物
-"投げ石": "img/icons/item_stone.png",
+stone: "img/icons/item_stone.png",
 // 草
-"回復草": "img/icons/item_grass_heal.png",
-"特製回復草": "img/icons/item_grass_heal_big.png",
-"毒草": "img/icons/item_grass_poison.png",
-"力の草": "img/icons/item_grass_power.png",
-"幸せの草": "img/icons/item_grass_happy.png",
-"万能薬草": "img/icons/item_grass_cureall.png",
+herb_heal: "img/icons/item_grass_heal.png",
+herb_heal2: "img/icons/item_grass_heal_big.png",
+herb_poison: "img/icons/item_grass_poison.png",
+herb_power: "img/icons/item_grass_power.png",
+herb_happy: "img/icons/item_grass_happy.png",
+herb_cure: "img/icons/item_grass_cureall.png",
 // 巻物
-"識別の巻物": "img/icons/item_scroll_identify.png",
-"地図の巻物": "img/icons/item_scroll_map.png",
-"眠りの巻物": "img/icons/item_scroll_sleep.png",
-"隠れ身の巻物": "img/icons/item_scroll_hide.png",
-"帰還の巻物": "img/icons/item_scroll_return.png",
-"砥石の巻物": "img/icons/item_scroll_whetstone.png",
-"一斉送信の巻物": "img/icons/item_scroll_send.png",
-"定時の巻物": "img/icons/item_scroll_teiji.png",
+scroll_identify: "img/icons/item_scroll_identify.png",
+scroll_map: "img/icons/item_scroll_map.png",
+scroll_sleep: "img/icons/item_scroll_sleep.png",
+scroll_hide: "img/icons/item_scroll_hide.png",
+scroll_return: "img/icons/item_scroll_return.png",
+scroll_whet: "img/icons/item_scroll_whetstone.png",
+scroll_broadcast: "img/icons/item_scroll_send.png",
+scroll_teiji: "img/icons/item_scroll_teiji.png",
+// 時計を戻すアイテム
+sand_small: "img/icons/item_sand_time.png",
+sand_big: "img/icons/item_hourglass_big.png",
+sand_cracked: "img/icons/item_hourglass_cracked.png",
 // 飲み物
-"エナジードリンク": "img/icons/item_drink_energy.png",
-"缶コーヒー": "img/icons/item_drink_coffee.png",
-// 時・帰還・通貨
-"時の砂": "img/icons/item_sand_time.png",
-"大きな砂時計": "img/icons/item_hourglass_big.png",
-"ひび割れた砂時計": "img/icons/item_hourglass_cracked.png",
-"帰還の糸": "img/icons/item_thread_return.png",
-"トニー": "img/icons/item_tony.png",
+energy: "img/icons/item_drink_energy.png",
+coffee: "img/icons/item_drink_coffee.png",
+// 帰還の糸・トニー
+thread: "img/icons/item_thread_return.png",
+tony: "img/icons/item_tony.png",
 };
 
-// 未識別の見た目アイコン（草6種・巻物8種）
-const ITEM_ICON_LOOKS = {
-grass: [1, 2, 3, 4, 5, 6].map(n => "img/icons/item_grass_look" + n + ".png"),
-scroll: [1, 2, 3, 4, 5, 6, 7, 8].map(n => "img/icons/item_scroll_look" + n + ".png"),
+// 未識別の見た目アイコン: 草（data.js の unknownNames.herb と対応）
+const HERB_LOOK_ICONS = {
+"青い草": "img/icons/item_grass_look2.png",
+"赤い草": "img/icons/item_grass_look1.png",
+"黄色い草": "img/icons/item_grass_look4.png",
+"白い草": "img/icons/item_grass_look3.png",
+"紫の草": "img/icons/item_grass_look5.png",
+"黒い草": "img/icons/item_grass_look7.png",
+"まだらの草": "img/icons/item_grass_look8.png",
+};
+// 未識別の見た目アイコン: 巻物（data.js の unknownNames.scroll と対応）
+const SCROLL_LOOK_ICONS = {
+"ゆらめく巻物": "img/icons/item_scroll_look1.png",
+"かすれた巻物": "img/icons/item_scroll_look2.png",
+"焦げた巻物": "img/icons/item_scroll_look3.png",
+"光る巻物": "img/icons/item_scroll_look4.png",
+"湿った巻物": "img/icons/item_scroll_look5.png",
+"古びた巻物": "img/icons/item_scroll_look6.png",
+"しわくちゃの巻物": "img/icons/item_scroll_look7.png",
+"金縁の巻物": "img/icons/item_scroll_look8.png",
+"破れた巻物": "img/icons/item_scroll_look9.png",
 };
 
-const GRASS_NAMES = ["回復草", "特製回復草", "毒草", "力の草", "幸せの草", "万能薬草"];
-const SCROLL_NAMES = ["識別の巻物", "地図の巻物", "眠りの巻物", "隠れ身の巻物",
-"帰還の巻物", "砥石の巻物", "一斉送信の巻物", "定時の巻物"];
+const HERB_IDS = ["herb_heal", "herb_heal2", "herb_poison", "herb_power", "herb_happy", "herb_cure"];
+const SCROLL_IDS = ["scroll_identify", "scroll_map", "scroll_sleep", "scroll_hide",
+"scroll_return", "scroll_whet", "scroll_broadcast", "scroll_teiji"];
 
-// アイテム（文字列 or オブジェクト）からアイコンのパスを返す
-function itemIconPath(item) {
-if (!item) return null;
-const name = (typeof item === "string")? item: (item.name || item.trueName || "");
-const identified = (typeof item === "object")
-? (item.identified!== false): true; // identified:false のときだけ未識別
-if (!identified) {
-if (GRASS_NAMES.includes(name)) {
-const looks = ITEM_ICON_LOOKS.grass;
-const i = (item.look >= 1 && item.look <= looks.length)
-? item.look - 1: GRASS_NAMES.indexOf(name) % looks.length;
-return looks[i];
+// アイテムIDからアイコンのパスを返す（無い場合は null）
+function itemIconPath(id, known, lookName) {
+if (!id) return null;
+if (!known) {
+if (HERB_IDS.includes(id)) {
+return HERB_LOOK_ICONS[lookName] || "img/icons/item_grass_look6.png";
 }
-if (SCROLL_NAMES.includes(name)) {
-const looks = ITEM_ICON_LOOKS.scroll;
-const i = (item.look >= 1 && item.look <= looks.length)
-? item.look - 1: SCROLL_NAMES.indexOf(name) % looks.length;
-return looks[i];
+if (SCROLL_IDS.includes(id)) {
+return SCROLL_LOOK_ICONS[lookName] || "img/icons/item_scroll_look1.png";
 }
 }
-return ITEM_ICONS[name] || null;
+return ITEM_ICONS_BY_ID[id] || null;
 }
 
-// 先読み（敵の絵の先読みと同じ場所で呼ぶ想定）
+// 先読み
 const _itemIconImages = {};
-function preloadItemIcons() {
-const paths = Object.values(ITEM_ICONS)
-.concat(ITEM_ICON_LOOKS.grass, ITEM_ICON_LOOKS.scroll);
-for (const p of paths) {
-if (!_itemIconImages[p]) {
+function _itemIconImg(path) {
+if (!path) return null;
+if (!_itemIconImages[path]) {
 const im = new Image();
-im.src = p;
-_itemIconImages[p] = im;
+im.src = path;
+_itemIconImages[path] = im;
 }
+return _itemIconImages[path];
 }
-}
-function itemIconImage(item) {
-const p = itemIconPath(item);
-if (!p) return null;
-if (!_itemIconImages[p]) { const im = new Image(); im.src = p; _itemIconImages[p] = im;}
-return _itemIconImages[p];
-}
-
-// Canvas用: (x, y) を左上として size px で描く。アイコンが無い場合は false
-function drawItemIcon(ctx, item, x, y, size) {
-const im = itemIconImage(item);
-if (!im ||!im.complete || im.naturalWidth === 0) return false;
-ctx.drawImage(im, x, y, size, size);
-return true;
+function preloadItemIcons() {
+const paths = Object.values(ITEM_ICONS_BY_ID)
+.concat(Object.values(HERB_LOOK_ICONS), Object.values(SCROLL_LOOK_ICONS),
+["img/icons/item_grass_look6.png"]);
+for (const p of paths) _itemIconImg(p);
 }
 
-// DOM用: 持ち物リストなどに差し込む <img> 文字列。無い場合は空文字
-function itemIconHTML(item, size) {
-const p = itemIconPath(item);
+// Canvas用: 読み込み済みの Image を返す（まだ読めていない場合も Image を返し、
+// 呼び出し側で complete を見て仮表示に切り替えること）
+function itemIconImage(id, known, lookName) {
+return _itemIconImg(itemIconPath(id, known, lookName));
+}
+
+// DOM用: 持ち物・村の一覧に差し込む <img> 文字列。アイコンが無い場合は ''
+function itemIconHTML(id, known, lookName) {
+const p = itemIconPath(id, known, lookName);
 if (!p) return "";
-const s = size || 28;
-const name = (typeof item === "string")? item: (item.name || "");
-return '<img src="' + p + '" width="' + s + '" height="' + s +
-'" alt="' + name + '" style="vertical-align:middle">';
+return '<img class="item-icon-img" src="' + p + '" alt="">';
 }
