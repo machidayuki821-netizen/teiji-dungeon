@@ -2,7 +2,7 @@
 // game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '7.6'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.7'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -228,6 +228,7 @@ function generateFloor() {
   const dungeon0 = DATA.dungeons[state.dungeonId];
   if (dungeon0.daily) withSeed(dateSeed(state.dailyKey) + state.floor * 7919, buildFloor);
   else buildFloor();
+  buildTerrain();
   updateVisibility();
 }
 
@@ -2520,6 +2521,162 @@ function resizeCanvas() {
   return { w, h };
 }
 
+
+// ============================================================
+// 地形の事前描画（洞窟テーマ）
+// 階層が作られたときに、地形だけを裏側のキャンバスへ描いておく。
+// 床の色揺れ・小石・装飾は座標から決まる固定パターン（チラつかない）。
+// テーマが無いダンジョンでは何もせず、従来の単色描画のままになる。
+// ============================================================
+let terrainCanvas = null;
+
+function tileHash(x, y, salt) {
+  let h = (x * 374761393 + y * 668265263 + (salt | 0) * 974634211) ^ (state.floor * 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+
+// 色を f 倍する（f<1 で暗く、f>1 で明るく）
+function shade(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, ((n >> 16) & 255) * f);
+  const g = Math.min(255, ((n >> 8) & 255) * f);
+  const b = Math.min(255, (n & 255) * f);
+  return `rgb(${r | 0},${g | 0},${b | 0})`;
+}
+
+function caveBand() {
+  const t = DATA.terrain && DATA.terrain.cave;
+  if (!t || state.dungeonId !== 'cave') return null;
+  return t.bands.find((b) => state.floor <= b.maxFloor) || t.bands[t.bands.length - 1];
+}
+
+function buildTerrain() {
+  terrainCanvas = null;
+  const th = caveBand();
+  if (!th) return;
+  const W = DATA.map.width, H = DATA.map.height, TP = DATA.terrain.tilePx;
+  const cv = document.createElement('canvas');
+  cv.width = W * TP; cv.height = H * TP;
+  const g = cv.getContext('2d');
+  const at = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? T_WALL : state.map[y][x];
+  const isFloor = (x, y) => at(x, y) !== T_WALL;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const px = x * TP, py = y * TP, t = at(x, y);
+      if (t === T_WALL) { drawWallTile(g, px, py, TP, x, y, th, isFloor); continue; }
+      // ---- 床 ----
+      const base = t === T_ROOM ? th.room : th.corridor;
+      g.fillStyle = shade(base, 0.92 + tileHash(x, y, 1) * 0.16);
+      g.fillRect(px, py, TP, TP);
+      // 小石・砂利
+      const n = 2 + Math.floor(tileHash(x, y, 2) * 4);
+      for (let i = 0; i < n; i++) {
+        g.fillStyle = tileHash(x, y, 40 + i) > 0.5 ? 'rgba(0,0,0,0.20)' : 'rgba(255,240,210,0.13)';
+        g.beginPath();
+        g.arc(px + tileHash(x, y, 10 + i) * TP, py + tileHash(x, y, 20 + i) * TP, 1 + tileHash(x, y, 30 + i) * 2.2, 0, Math.PI * 2);
+        g.fill();
+      }
+      // ひび
+      if (tileHash(x, y, 3) < 0.16) {
+        g.strokeStyle = 'rgba(0,0,0,0.22)'; g.lineWidth = 1;
+        const cx0 = px + TP * (0.2 + tileHash(x, y, 4) * 0.5), cy0 = py + TP * (0.2 + tileHash(x, y, 5) * 0.5);
+        g.beginPath(); g.moveTo(cx0, cy0);
+        g.lineTo(cx0 + (tileHash(x, y, 6) - 0.5) * TP * 0.5, cy0 + (tileHash(x, y, 7) - 0.5) * TP * 0.5);
+        g.lineTo(cx0 + (tileHash(x, y, 8) - 0.5) * TP * 0.7, cy0 + (tileHash(x, y, 9) - 0.5) * TP * 0.7);
+        g.stroke();
+      }
+      // 北側が壁なら、上端に壁の影を落とす
+      if (!isFloor(x, y - 1)) {
+        const gr = g.createLinearGradient(0, py, 0, py + TP * 0.35);
+        gr.addColorStop(0, 'rgba(0,0,0,0.35)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = gr; g.fillRect(px, py, TP, TP * 0.35);
+      }
+      const nearWall = !isFloor(x, y - 1) || !isFloor(x, y + 1) || !isFloor(x - 1, y) || !isFloor(x + 1, y);
+      // 苔（壁際の床）
+      if (th.moss > 0 && nearWall && tileHash(x, y, 50) < th.moss) {
+        g.fillStyle = 'rgba(96,142,66,0.5)';
+        for (let i = 0; i < 3; i++) {
+          g.beginPath();
+          g.ellipse(px + tileHash(x, y, 51 + i) * TP, py + tileHash(x, y, 54 + i) * TP,
+            4 + tileHash(x, y, 57 + i) * 7, 3 + tileHash(x, y, 60 + i) * 4, 0, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      // 水たまり（部屋の床だけ）
+      if (th.puddle > 0 && t === T_ROOM && tileHash(x, y, 70) < th.puddle) {
+        g.fillStyle = 'rgba(148,178,199,0.4)';
+        g.beginPath(); g.ellipse(px + TP / 2, py + TP / 2, TP * 0.36, TP * 0.22, 0, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = 'rgba(220,240,255,0.35)'; g.lineWidth = 1.5;
+        g.beginPath(); g.ellipse(px + TP / 2, py + TP / 2, TP * 0.3, TP * 0.17, 0, Math.PI * 1.15, Math.PI * 1.7); g.stroke();
+      }
+      // 結晶（北側が壁の床に、小さく光る）
+      if (th.crystal > 0 && !isFloor(x, y - 1) && tileHash(x, y, 80) < th.crystal) {
+        const bx = px + TP * (0.2 + tileHash(x, y, 81) * 0.5), by = py + TP * 0.32;
+        g.fillStyle = 'rgba(140,230,220,0.16)';
+        g.beginPath(); g.arc(bx, by, TP * 0.3, 0, Math.PI * 2); g.fill();
+        g.fillStyle = 'rgba(168,240,230,0.85)';
+        for (let i = 0; i < 3; i++) {
+          const w2 = 3 + tileHash(x, y, 82 + i) * 3, h2 = 8 + tileHash(x, y, 85 + i) * 9, ox = (i - 1) * 6;
+          g.beginPath();
+          g.moveTo(bx + ox - w2 / 2, by); g.lineTo(bx + ox, by - h2); g.lineTo(bx + ox + w2 / 2, by);
+          g.closePath(); g.fill();
+        }
+      }
+      // グリッド（薄く残す）
+      g.strokeStyle = 'rgba(0,0,0,0.15)'; g.lineWidth = 1;
+      g.strokeRect(px + 0.5, py + 0.5, TP - 1, TP - 1);
+    }
+  }
+  terrainCanvas = cv;
+}
+
+function drawWallTile(g, px, py, TP, x, y, th, isFloor) {
+  const adj = isFloor(x, y + 1) || isFloor(x, y - 1) || isFloor(x + 1, y) || isFloor(x - 1, y) ||
+    isFloor(x + 1, y + 1) || isFloor(x - 1, y + 1) || isFloor(x + 1, y - 1) || isFloor(x - 1, y - 1);
+  if (!adj) {
+    // 床に接しない壁は、ほぼ黒に微かな岩肌だけ
+    g.fillStyle = th.wallDeep;
+    g.fillRect(px, py, TP, TP);
+    if (tileHash(x, y, 90) < 0.3) {
+      g.fillStyle = 'rgba(255,255,255,0.03)';
+      g.beginPath();
+      g.ellipse(px + tileHash(x, y, 91) * TP, py + tileHash(x, y, 92) * TP, TP * 0.3, TP * 0.2, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    return;
+  }
+  // 床に接する壁は「岩の断面」として描く
+  g.fillStyle = shade(th.wallFace, 0.9 + tileHash(x, y, 93) * 0.2);
+  g.fillRect(px, py, TP, TP);
+  for (let i = 0; i < 3; i++) {
+    g.fillStyle = i % 2 ? 'rgba(0,0,0,0.16)' : 'rgba(255,235,200,0.06)';
+    g.beginPath();
+    g.ellipse(px + tileHash(x, y, 94 + i) * TP, py + tileHash(x, y, 97 + i) * TP,
+      TP * (0.16 + tileHash(x, y, 100 + i) * 0.2), TP * 0.12, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  // 床に接する縁を明るくして、掘られた断面の輪郭を出す
+  g.fillStyle = th.rim;
+  if (isFloor(x, y + 1)) g.fillRect(px, py + TP - 3, TP, 3);
+  if (isFloor(x, y - 1)) g.fillRect(px, py, TP, 3);
+  if (isFloor(x + 1, y)) g.fillRect(px + TP - 3, py, 3, TP);
+  if (isFloor(x - 1, y)) g.fillRect(px, py, 3, TP);
+  if (isFloor(x, y + 1)) { g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(px, py + TP - 6, TP, 2); }
+  // 岩の突起（下が床の壁にだけ、縁から小さな三角）
+  if (isFloor(x, y + 1) && tileHash(x, y, 110) < th.stalactite) {
+    g.fillStyle = shade(th.wallFace, 1.3);
+    const n = 2 + Math.floor(tileHash(x, y, 111) * 2);
+    for (let i = 0; i < n; i++) {
+      const sx = px + TP * (0.25 + 0.25 * i + tileHash(x, y, 112 + i) * 0.12);
+      const len = TP * (0.14 + tileHash(x, y, 114 + i) * 0.12);
+      g.beginPath();
+      g.moveTo(sx - 3.5, py + TP - 3); g.lineTo(sx, py + TP - 3 - len); g.lineTo(sx + 3.5, py + TP - 3);
+      g.closePath(); g.fill();
+    }
+  }
+}
+
 function render() {
   const C = DATA.colors;
   const { w, h } = resizeCanvas();
@@ -2538,23 +2695,44 @@ function render() {
   const x1 = Math.min(DATA.map.width - 1, Math.ceil((camX + w) / ts) + 1);
   const y1 = Math.min(DATA.map.height - 1, Math.ceil((camY + h) / ts) + 1);
 
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const i = idx(x, y);
-      if (!state.explored[i]) continue;
-      const sx = x * ts - camX, sy = y * ts - camY;
-      const t = state.map[y][x];
-      ctx.fillStyle = t === T_WALL ? C.wall : t === T_ROOM ? C.room : C.corridor;
-      ctx.fillRect(sx, sy, ts + 0.5, ts + 0.5);
-      if (t !== T_WALL) {
-        ctx.strokeStyle = C.gridLine;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(sx + 0.5, sy + 0.5, ts - 1, ts - 1);
+  if (terrainCanvas) {
+    // 事前に描いた地形を、カメラ位置に合わせて貼る
+    ctx.drawImage(terrainCanvas, -camX, -camY, DATA.map.width * ts, DATA.map.height * ts);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = idx(x, y);
+        const sx = x * ts - camX, sy = y * ts - camY;
+        if (!state.explored[i]) {
+          ctx.fillStyle = C.void;
+          ctx.fillRect(sx, sy, ts + 0.5, ts + 0.5);
+          continue;
+        }
+        if (x === state.stairs.x && y === state.stairs.y) drawStairs(sx, sy, ts);
+        if (!state.visible[i]) {
+          ctx.fillStyle = C.fog;
+          ctx.fillRect(sx, sy, ts + 0.5, ts + 0.5);
+        }
       }
-      if (x === state.stairs.x && y === state.stairs.y) drawStairs(sx, sy, ts);
-      if (!state.visible[i]) {
-        ctx.fillStyle = C.fog;
+    }
+  } else {
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = idx(x, y);
+        if (!state.explored[i]) continue;
+        const sx = x * ts - camX, sy = y * ts - camY;
+        const t = state.map[y][x];
+        ctx.fillStyle = t === T_WALL ? C.wall : t === T_ROOM ? C.room : C.corridor;
         ctx.fillRect(sx, sy, ts + 0.5, ts + 0.5);
+        if (t !== T_WALL) {
+          ctx.strokeStyle = C.gridLine;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(sx + 0.5, sy + 0.5, ts - 1, ts - 1);
+        }
+        if (x === state.stairs.x && y === state.stairs.y) drawStairs(sx, sy, ts);
+        if (!state.visible[i]) {
+          ctx.fillStyle = C.fog;
+          ctx.fillRect(sx, sy, ts + 0.5, ts + 0.5);
+        }
       }
     }
   }

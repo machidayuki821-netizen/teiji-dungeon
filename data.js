@@ -3,7 +3,7 @@
 // 数値の調整は基本的にこのファイルだけで行う
 // ============================================================
 const DATA = {
-  version: '7.6',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
+  version: '7.7',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
 
   // テスト用（本番では false にする）
   debug: {
@@ -580,5 +580,22 @@ const DATA = {
     heal: '#7dff9a',
     unknownName: '#ffd84a', // 持ち物画面での未識別アイテムの文字色
     sensed: 'rgba(255,154,60,0.55)', // 危険察知で見えている敵
+  },
+  // ダンジョンの地形テーマ（壁・床・装飾の見た目）。洞窟は階層帯ごとに色と装飾が変わる
+  // moss/puddle/crystal/stalactite は装飾の出る確率（0〜1）。歩行判定には影響しない
+  terrain: {
+    tilePx: 64, // 地形を事前に描くときの1マスの大きさ（px）
+    cave: {
+      bands: [
+        // 入口帯：明るめ、苔が多い
+        { maxFloor: 3,  room: '#77644e', corridor: '#63533f', wallFace: '#4d4238', wallDeep: '#17141c', rim: '#a08b6d', moss: 0.34, puddle: 0,    crystal: 0,    stalactite: 0.16 },
+        // 湿潤帯：暗く、水たまりと鍾乳石
+        { maxFloor: 6,  room: '#6b5844', corridor: '#574838', wallFace: '#453a31', wallDeep: '#14121a', rim: '#8d7a5f', moss: 0.16, puddle: 0.09, crystal: 0,    stalactite: 0.24 },
+        // 深層帯：青紫寄り、結晶が光る
+        { maxFloor: 9,  room: '#5d5148', corridor: '#4c423c', wallFace: '#3c3540', wallDeep: '#100e16', rim: '#7d7468', moss: 0.05, puddle: 0.05, crystal: 0.16, stalactite: 0.22 },
+        // 最下層（ボス）：暗い赤茶
+        { maxFloor: 99, room: '#5e463a', corridor: '#4d382e', wallFace: '#40302a', wallDeep: '#120d10', rim: '#8a6a52', moss: 0,    puddle: 0,    crystal: 0.08, stalactite: 0.2 },
+      ],
+    },
   },
 };
