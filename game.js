@@ -2,7 +2,7 @@
 // game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '7.10'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.11'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -2352,7 +2352,10 @@ function openTitle() {
       inner.style.backgroundSize = '500% 100%';
       inner.style.backgroundPosition = '0 0';
     }
-    if (c.flip) inner.style.transform = 'scaleX(-1)';
+    const tf = [];
+    if (c.flip) tf.push('scaleX(-1)');
+    if (c.rot) { tf.push(`rotate(${c.rot}deg)`); inner.style.transformOrigin = '50% 90%'; }
+    if (tf.length) inner.style.transform = tf.join(' ');
     if (c.tint) inner.style.filter = c.tint;
     el.appendChild(inner);
     cast.appendChild(el);

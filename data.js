@@ -3,7 +3,7 @@
 // 数値の調整は基本的にこのファイルだけで行う
 // ============================================================
 const DATA = {
-  version: '7.10',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
+  version: '7.11',  // データのバージョン（画面右下に表示。更新したら数字を上げる）
 
   // テスト用（本番では false にする）
   debug: {
@@ -476,15 +476,27 @@ const DATA = {
   title: {
     logo: 'img/title_logo.png',
     cast: [
-      { sprite: 'otsubone',  x: 13, y: 56, size: 31, idle: 'breathe', flip: true },
-      { sprite: 'amakudari', x: 86, y: 52, size: 30, idle: 'float' },
-      { sprite: 'nabakari',  x: 35, y: 58, size: 28, idle: 'sway', flip: true },
-      { sprite: 'sontaku',   x: 65, y: 58, size: 28, idle: 'sway' },
-      { sprite: 'madogiwa',  x: 19, y: 75, size: 33, idle: 'slow', flip: true },
-      { sprite: 'nemawashi', x: 81, y: 73, size: 31, idle: 'breathe' },
-      { sprite: 'sabizan',   x: 13, y: 92, size: 33, idle: 'jitter', flip: true },
-      { sprite: 'marunage',  x: 87, y: 91, size: 33, idle: 'sway' },
-      { hero: true,          x: 50, y: 85, size: 50, idle: 'breathe' },
+      // 後列
+      { sprite: 'nemawashi', x: 13, y: 65, size: 27, idle: 'breathe', rot: -5, tint: 'hue-rotate(260deg) saturate(1.5)' },
+      { sprite: 'otsubone',  x: 50, y: 63, size: 35, idle: 'breathe', flip: true },
+      { sprite: 'amakudari', x: 87, y: 65, size: 27, idle: 'float', rot: 5, tint: 'hue-rotate(-40deg) saturate(1.8) brightness(1.05)' },
+      // 中後列
+      { sprite: 'madogiwa',  x: 14, y: 75, size: 31, idle: 'slow', rot: -4, flip: true, tint: 'hue-rotate(300deg) saturate(1.3)' },
+      { sprite: 'sabizan',   x: 34, y: 74, size: 29, idle: 'jitter', rot: -3, tint: 'hue-rotate(200deg) saturate(1.2)' },
+      { sprite: 'marunage',  x: 66, y: 74, size: 29, idle: 'sway', rot: 3, tint: 'hue-rotate(120deg) saturate(1.4)' },
+      { sprite: 'sontaku',   x: 86, y: 75, size: 28, idle: 'sway', rot: 4, tint: 'hue-rotate(170deg) saturate(1.2)' },
+      // 中列
+      { sprite: 'madogiwa',  x: 11, y: 86, size: 33, idle: 'slow', rot: -3, flip: true },
+      { sprite: 'nabakari',  x: 29, y: 84, size: 32, idle: 'sway', rot: -2, flip: true },
+      { sprite: 'sontaku',   x: 71, y: 84, size: 32, idle: 'sway', rot: 2 },
+      { sprite: 'marunage',  x: 90, y: 86, size: 33, idle: 'sway', rot: 3 },
+      // 前列
+      { sprite: 'sabizan',   x: 18, y: 94, size: 39, idle: 'jitter', rot: -3, flip: true },
+      { sprite: 'nabakari',  x: 35, y: 92, size: 33, idle: 'sway', rot: -2, flip: true, tint: 'hue-rotate(180deg) saturate(1.2)' },
+      { sprite: 'otsubone',  x: 67, y: 91, size: 33, idle: 'breathe', rot: 2, tint: 'hue-rotate(140deg) saturate(1.3)' },
+      { sprite: 'amakudari', x: 83, y: 94, size: 37, idle: 'float', rot: 3 },
+      // 主人公（中央・最前面）
+      { hero: true,          x: 50, y: 96, size: 60, idle: 'breathe' },
     ],
   },
 
