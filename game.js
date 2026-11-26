@@ -2,7 +2,7 @@
 // game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '7.8'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.9'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -2842,13 +2842,30 @@ function drawStairs(sx, sy, ts) {
     ctx.restore();
     return;
   }
-  ctx.fillStyle = DATA.colors.stairs;
-  const pad = ts * 0.18;
-  const step = (ts - pad * 2) / 3;
-  for (let i = 0; i < 3; i++) {
-    const bw = (ts - pad * 2) * (1 - i * 0.25);
-    ctx.fillRect(sx + (ts - bw) / 2, sy + pad + i * step, bw, step * 0.6);
+  // 石段：岩を刻んだ階段。上が奥（暗く狭く）、下が手前（明るく広く）
+  const pad = ts * 0.07;
+  const w0 = ts - pad * 2, h0 = ts - pad * 2;
+  const x0 = sx + pad, y0 = sy + pad;
+  ctx.fillStyle = '#171310';
+  ctx.fillRect(x0, y0, w0, h0);
+  const steps = 4, sh = h0 / steps;
+  for (let i = 0; i < steps; i++) {
+    const f = i / (steps - 1); // 0=奥, 1=手前
+    const inset = (1 - f) * ts * 0.1;
+    const bw = w0 - inset * 2, bx = x0 + inset, by = y0 + i * sh;
+    ctx.fillStyle = `rgb(${(86 + f * 40) | 0},${(72 + f * 32) | 0},${(56 + f * 24) | 0})`;
+    ctx.fillRect(bx, by, bw, sh - 1);
+    ctx.fillStyle = 'rgba(255,240,210,0.28)';
+    ctx.fillRect(bx, by, bw, 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(bx, by + sh - 3, bw, 2);
   }
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x0 + 1, y0 + 1, w0 - 2, h0 - 2);
+  ctx.strokeStyle = 'rgba(255,240,210,0.18)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x0 + 2.5, y0 + 2.5, w0 - 5, h0 - 5);
 }
 
 // ---- 敵の絵 ----
@@ -3084,14 +3101,14 @@ function drawFloorItem(f, sx, sy, ts, dim) {
   const icon = (typeof itemIconImage === 'function')
     ? itemIconImage(f.item.id, isKnown(f.item.id), state.looks[f.item.id]) : null;
   if (icon && icon.complete && icon.naturalWidth > 0) {
-    const s = ts * 0.95;
+    const s = ts * 1.1;
     ctx.globalAlpha = dim ? 0.5 : 1;
     // 質感のある床でも埋もれないよう、暗い台座サークルを敷く
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath(); ctx.arc(sx + ts / 2, sy + ts / 2, ts * 0.44, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + ts / 2, sy + ts / 2, ts * 0.5, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.28)';
     ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(sx + ts / 2, sy + ts / 2, ts * 0.44, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(sx + ts / 2, sy + ts / 2, ts * 0.5, 0, Math.PI * 2); ctx.stroke();
     ctx.drawImage(icon, sx + (ts - s) / 2, sy + (ts - s) / 2, s, s);
     ctx.globalAlpha = 1;
     return;
