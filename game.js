@@ -2,7 +2,7 @@
 // game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '7.7'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.8'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -2610,17 +2610,23 @@ function buildTerrain() {
         g.strokeStyle = 'rgba(220,240,255,0.35)'; g.lineWidth = 1.5;
         g.beginPath(); g.ellipse(px + TP / 2, py + TP / 2, TP * 0.3, TP * 0.17, 0, Math.PI * 1.15, Math.PI * 1.7); g.stroke();
       }
-      // 結晶（北側が壁の床に、小さく光る）
+      // 結晶（北側が壁の床に生える。円状の光は付けず、結晶の形そのもので見せる）
       if (th.crystal > 0 && !isFloor(x, y - 1) && tileHash(x, y, 80) < th.crystal) {
-        const bx = px + TP * (0.2 + tileHash(x, y, 81) * 0.5), by = py + TP * 0.32;
-        g.fillStyle = 'rgba(140,230,220,0.16)';
-        g.beginPath(); g.arc(bx, by, TP * 0.3, 0, Math.PI * 2); g.fill();
-        g.fillStyle = 'rgba(168,240,230,0.85)';
-        for (let i = 0; i < 3; i++) {
-          const w2 = 3 + tileHash(x, y, 82 + i) * 3, h2 = 8 + tileHash(x, y, 85 + i) * 9, ox = (i - 1) * 6;
+        const bx = px + TP * (0.25 + tileHash(x, y, 81) * 0.45), by = py + TP * 0.36;
+        // 足元の影だけ（光の円は付けない）
+        g.fillStyle = 'rgba(0,0,0,0.28)';
+        g.beginPath(); g.ellipse(bx, by + 2, TP * 0.2, TP * 0.07, 0, 0, Math.PI * 2); g.fill();
+        for (let i = 0; i < 4; i++) {
+          const w2 = 5 + tileHash(x, y, 82 + i) * 4, h2 = 13 + tileHash(x, y, 85 + i) * 13, ox = (i - 1.5) * 8;
+          g.fillStyle = 'rgba(158,236,224,0.95)';
+          g.strokeStyle = 'rgba(64,150,146,0.9)';
+          g.lineWidth = 1;
           g.beginPath();
           g.moveTo(bx + ox - w2 / 2, by); g.lineTo(bx + ox, by - h2); g.lineTo(bx + ox + w2 / 2, by);
-          g.closePath(); g.fill();
+          g.closePath(); g.fill(); g.stroke();
+          // 結晶の稜線（白いハイライト）
+          g.strokeStyle = 'rgba(255,255,255,0.75)';
+          g.beginPath(); g.moveTo(bx + ox, by - h2); g.lineTo(bx + ox, by - h2 * 0.35); g.stroke();
         }
       }
       // グリッド（薄く残す）
@@ -3078,14 +3084,20 @@ function drawFloorItem(f, sx, sy, ts, dim) {
   const icon = (typeof itemIconImage === 'function')
     ? itemIconImage(f.item.id, isKnown(f.item.id), state.looks[f.item.id]) : null;
   if (icon && icon.complete && icon.naturalWidth > 0) {
-    const s = ts * 0.74;
+    const s = ts * 0.95;
     ctx.globalAlpha = dim ? 0.5 : 1;
+    // 質感のある床でも埋もれないよう、暗い台座サークルを敷く
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.arc(sx + ts / 2, sy + ts / 2, ts * 0.44, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(sx + ts / 2, sy + ts / 2, ts * 0.44, 0, Math.PI * 2); ctx.stroke();
     ctx.drawImage(icon, sx + (ts - s) / 2, sy + (ts - s) / 2, s, s);
     ctx.globalAlpha = 1;
     return;
   }
   const cat = DATA.itemCats[itemDef(f.item).cat];
-  const s = ts * 0.5;
+  const s = ts * 0.62;
   const x = sx + (ts - s) / 2, y = sy + (ts - s) / 2;
   ctx.globalAlpha = dim ? 0.5 : 1;
   ctx.fillStyle = cat.color;
