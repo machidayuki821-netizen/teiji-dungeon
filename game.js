@@ -2,7 +2,7 @@
 // game.js ― ゲームの仕組み（段階⑦：敵・状態異常・鍛冶屋）
 // ============================================================
 'use strict';
-const GAME_VERSION = '7.9'; // プログラムのバージョン（画面右下に表示）
+const GAME_VERSION = '7.10'; // プログラムのバージョン（画面右下に表示）
 
 // ---- 定数 ----
 const T_WALL = 0;   // 壁
@@ -3101,14 +3101,8 @@ function drawFloorItem(f, sx, sy, ts, dim) {
   const icon = (typeof itemIconImage === 'function')
     ? itemIconImage(f.item.id, isKnown(f.item.id), state.looks[f.item.id]) : null;
   if (icon && icon.complete && icon.naturalWidth > 0) {
-    const s = ts * 1.1;
+    const s = ts * 0.9;
     ctx.globalAlpha = dim ? 0.5 : 1;
-    // 質感のある床でも埋もれないよう、暗い台座サークルを敷く
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath(); ctx.arc(sx + ts / 2, sy + ts / 2, ts * 0.5, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(sx + ts / 2, sy + ts / 2, ts * 0.5, 0, Math.PI * 2); ctx.stroke();
     ctx.drawImage(icon, sx + (ts - s) / 2, sy + (ts - s) / 2, s, s);
     ctx.globalAlpha = 1;
     return;
@@ -3227,6 +3221,32 @@ function drawHeroSprite(sx, sy, ts, dir, hurt) {
   ctx.rotate(sw * H.tilt * (state.player.stepSide || 1) + ir + attackLean(state.player));
   ctx.scale((1 - sw * H.stretch * 0.5) * isx, (1 + sw * H.stretch) * isy);
   ctx.drawImage(tintCanvas, -size / 2, -size * 0.97, size, size);
+
+  // 装備中の盾・剣を手に持たせる
+  const p = state.player;
+  const dxy = DIRS[dir];
+  const front = dxy[0] !== 0 ? Math.sign(dxy[0]) : 1; // 横向きは進む側の手、正面は右手
+  const handY = dxy[1] < 0 ? -size * 0.42 : -size * 0.48; // 背面は少し低く
+  const drawEquip = (item, cx, cy, es, rot, mirror) => {
+    if (!item || typeof itemIconImage !== 'function') return;
+    const im = itemIconImage(item.id, true, null);
+    if (!im || !im.complete || !im.naturalWidth) return;
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (mirror) ctx.scale(-1, 1);
+    if (rot) ctx.rotate(rot);
+    ctx.drawImage(im, -es / 2, -es / 2, es, es);
+    ctx.restore();
+  };
+  // 盾は武器と反対の手に
+  drawEquip(p.shield, -front * size * 0.31, handY, size * 0.44, 0, false);
+  // 剣は攻撃に合わせて振る
+  let wrot = front * 0.15;
+  if (p.atkT > 0) {
+    const prog = Math.min(p.atkT / 0.7, 1); // 振りかぶり→振り下ろし
+    wrot = front * (-0.9 + prog * 1.9);
+  }
+  drawEquip(p.weapon, front * size * 0.31, handY, size * 0.5, wrot, front < 0);
   ctx.restore();
 
   // 向きの目印（足元の小さな矢印）

@@ -29,18 +29,11 @@ html, body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* ---- ステータス（タイムカード風） ---- */
+/* ---- ステータス ---- */
 #status {
-  position: relative;
-  padding: 7px 12px 8px 20px;
-  background-color: #f6f0dd;
-  background-image:
-    radial-gradient(circle 3px at 9px 22%, rgba(20,17,24,0.55) 96%, transparent),
-    radial-gradient(circle 3px at 9px 50%, rgba(20,17,24,0.55) 96%, transparent),
-    radial-gradient(circle 3px at 9px 78%, rgba(20,17,24,0.55) 96%, transparent),
-    repeating-linear-gradient(0deg, transparent 0 25px, rgba(43,38,32,0.055) 25px 26px);
-  border-bottom: 3px solid #a02334;
-  color: #2b2620;
+  padding: 7px 12px 8px;
+  background: linear-gradient(#2b2119, #201812);
+  border-bottom: 3px solid #c9a24d;
   font-size: 14px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.45);
 }
@@ -49,27 +42,26 @@ html, body {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  line-height: 1.55;
+  line-height: 1.6;
 }
+#floor { font-weight: bold; font-size: 17px; color: #e8c35a; }
 #dungeon-name { font-weight: bold; font-size: 15px; }
 #dungeon-name::before {
   content: '';
   display: inline-block;
   width: 9px; height: 9px;
   margin-right: 6px;
-  background: #a02334;
+  background: #c9a24d;
   border-radius: 2px;
+  transform: rotate(45deg);
 }
-#floor { font-weight: bold; font-size: 17px; color: #2e4370; }
 #lv { font-weight: bold; }
-#hp { font-variant-numeric: tabular-nums; }
 #hpbar {
-  position: relative;
   height: 10px;
   margin: 3px 0 2px;
-  background-color: #ddd2b8;
-  background-image: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(43,38,32,0.35) calc(10% - 1px) 10%);
-  border: 1px solid #b7a888;
+  background-color: #171310;
+  background-image: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(239,230,207,0.22) calc(10% - 1px) 10%);
+  border: 1px solid #5a4632;
   border-radius: 3px;
   overflow: hidden;
 }
@@ -81,22 +73,21 @@ html, body {
 }
 #hpfill.mid { background: #e8c35a; }
 #hpfill.low { background: #e0484f; }
-/* 帰還の糸（タップで使う）：カードのチップ風 */
+/* 帰還の糸（タップで使う） */
 #threads {
   padding: 3px 10px;
   font-size: 15px;
   letter-spacing: 2px;
-  color: #2b2620;
-  background: #fffdf4;
-  border: 2px solid #a02334;
-  border-radius: 8px;
-  box-shadow: 0 1px 2px rgba(43,38,32,0.3);
+  background: #2e241b;
+  border: 2px solid #c9a24d;
+  border-radius: 9px;
+  min-height: 0;
+  box-shadow: none;
 }
-#threads:active { background: #f3e3c8; }
-/* 時計：タイムレコーダーの印字風（勤務時間＝紺、残業＝橙、終電後＝赤） */
-#clock { font-weight: bold; font-size: 17px; color: #2e4370; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
-#clock.overtime { color: #c25e00; }
-#clock.late { color: #cf2f2f; }
+/* 時計：勤務時間＝白、残業＝オレンジ、終電後＝赤 */
+#clock { font-weight: bold; font-size: 16px; font-variant-numeric: tabular-nums; }
+#clock.overtime { color: #ff9a3c; }
+#clock.late { color: #ff5a5a; }
 /* 24:00以降：1ターンごとに点滅させる */
 #clock.blink { animation: clock-blink 0.5s ease-out; }
 @keyframes clock-blink {
@@ -137,7 +128,7 @@ html, body {
   min-height: 196px;
   max-height: 268px;
   background: linear-gradient(#211a14, #171310);
-  border-top: 3px solid #a02334;
+  border-top: 3px solid #c9a24d;
 }
 #app.swapped #controls { flex-direction: row-reverse; }
 
@@ -154,14 +145,14 @@ html, body {
   height: 136px;
   margin: -68px 0 0 -68px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(246,240,221,0.09), rgba(246,240,221,0.03) 70%);
-  border: 2px solid rgba(246,240,221,0.35);
-  box-shadow: inset 0 0 0 8px rgba(246,240,221,0.05), 0 2px 10px rgba(0,0,0,0.4);
+  background: radial-gradient(circle, rgba(239,230,207,0.08), rgba(239,230,207,0.02) 70%);
+  border: 2px solid rgba(201,162,77,0.5);
+  box-shadow: inset 0 0 0 8px rgba(239,230,207,0.04), 0 2px 10px rgba(0,0,0,0.4);
   pointer-events: none;
 }
 #stick-base.active {
-  background: radial-gradient(circle, rgba(246,240,221,0.14), rgba(246,240,221,0.05) 70%);
-  border-color: rgba(246,240,221,0.55);
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.35);
 }
 #stick-knob {
   position: absolute;
@@ -172,7 +163,7 @@ html, body {
   margin: -29px 0 0 -29px;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, #c84555, #8b1e32 75%);
-  border: 2px solid rgba(246,240,221,0.75);
+  border: 2px solid rgba(201,162,77,0.8);
   box-shadow: 0 3px 8px rgba(0,0,0,0.5);
 }
 #stick-hint {
@@ -181,7 +172,7 @@ html, body {
   width: 100%;
   text-align: center;
   font-size: 11px;
-  color: #8d8172;
+  color: #777;
   pointer-events: none;
 }
 
@@ -195,9 +186,9 @@ html, body {
 }
 button {
   font-family: inherit;
-  color: #f2ead6;
-  background: #2e2822;
-  border: 1px solid #55483a;
+  color: #efe6cf;
+  background: #2e241b;
+  border: 1px solid #5a4632;
   border-radius: 12px;
   font-size: 15px;
   padding: 12px 0;
@@ -205,20 +196,19 @@ button {
   touch-action: manipulation;
   box-shadow: 0 2px 4px rgba(0,0,0,0.35);
 }
-button:active { background: #453a2f; }
+button:active { background: #453625; }
 button:disabled { opacity: 0.35; }
 button.big {
   height: 74px;
   font-size: 20px;
   font-weight: bold;
   letter-spacing: 3px;
-  color: #a02334;
-  background: #f6f0dd;
-  border: 3px solid #a02334;
-  border-radius: 10px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.35), inset 0 0 0 2px rgba(246,240,221,1), inset 0 0 0 4px rgba(160,35,52,0.3);
+  color: #ffe9a8;
+  background: linear-gradient(#7a2432, #5a1a28);
+  border: 2px solid #c9a24d;
+  border-radius: 12px;
 }
-button.big:active { background: #a02334; color: #f6f0dd; }
+button.big:active { background: #8b1e32; }
 button.dim { opacity: 0.5; }  /* 使えない状態のボタン（押すと理由が出る） */
 button.on {
   background: #6b5a1e;
@@ -231,7 +221,7 @@ button.on {
 }
 .small-row button { flex: 1; }
 
-/* ---- 持ち物画面（カード地） ---- */
+/* ---- 持ち物画面 ---- */
 #bag {
   position: fixed;
   inset: 0;
@@ -248,13 +238,10 @@ button.on {
   max-height: 74vh;
   display: flex;
   flex-direction: column;
-  background-color: #f6f0dd;
-  background-image: repeating-linear-gradient(0deg, transparent 0 25px, rgba(43,38,32,0.045) 25px 26px);
-  color: #2b2620;
-  border-top: 4px solid #a02334;
+  background: #221a13;
+  border-top: 4px solid #c9a24d;
   border-radius: 16px 16px 0 0;
   padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
-  box-shadow: 0 -4px 24px rgba(0,0,0,0.5);
 }
 .sheet-head {
   display: flex;
@@ -262,10 +249,10 @@ button.on {
   align-items: baseline;
   padding: 2px 4px 8px;
   font-weight: bold;
-  border-bottom: 2px dashed #c9bb98;
+  border-bottom: 2px dashed #5a4632;
   margin-bottom: 8px;
 }
-#bag-stats { font-size: 13px; font-weight: normal; color: #6b6252; }
+#bag-stats { font-size: 13px; font-weight: normal; color: #bbb; }
 #bag-list {
   flex: 1;
   overflow-y: auto;
@@ -281,17 +268,14 @@ button.on {
   margin-bottom: 5px;
   text-align: left;
   font-size: 15px;
-  color: #2b2620;
-  background: #fffdf4;
-  border: 1px solid #ddd2b8;
   border-radius: 10px;
-  box-shadow: none;
   min-height: 60px;
+  box-shadow: none;
 }
 .item-row.selected {
-  background: #f7e8c9;
-  border-color: #a02334;
-  box-shadow: inset 4px 0 0 #a02334;
+  background: #4a2530;
+  border-color: #c9a24d;
+  box-shadow: inset 4px 0 0 #c9a24d;
 }
 .item-icon {
   flex: none;
@@ -311,14 +295,14 @@ button.on {
   object-fit: contain;
 }
 .item-name { flex: 1; }
-.item-name.unknown { color: #a97b00; }  /* 未識別アイテム */
-.item-equip { color: #a02334; font-weight: bold; font-size: 13px; }
-.bag-empty { padding: 20px; text-align: center; color: #8d8172; }
+.item-name.unknown { color: #ffd84a; }  /* 未識別アイテム */
+.item-equip { color: #e8c35a; font-weight: bold; font-size: 13px; }
+.bag-empty { padding: 20px; text-align: center; color: #888; }
 #bag-desc {
   min-height: 1.6em;
   padding: 6px 4px;
   font-size: 13px;
-  color: #4c463c;
+  color: #ccc;
 }
 #bag-actions {
   display: flex;
@@ -328,19 +312,12 @@ button.on {
   flex: 1;
   padding: 14px 0;
   font-size: 15px;
-  color: #2b2620;
-  background: #efe8d2;
-  border-color: #b7a888;
-  box-shadow: none;
 }
-#bag-actions button:active { background: #e3d7ba; }
 #bag-actions button.primary {
-  background: #a02334;
-  border-color: #7c1a29;
-  color: #fff;
+  background: #5a1a28;
+  border-color: #8b1e32;
   font-weight: bold;
 }
-#bag-actions button.primary:active { background: #7c1a29; }
 
 /* ---- オーバーレイ ---- */
 #overlay {
@@ -358,15 +335,12 @@ button.on {
   max-width: 360px;
   padding: 24px;
   text-align: center;
-  background-color: #f6f0dd;
-  background-image: repeating-linear-gradient(0deg, transparent 0 25px, rgba(43,38,32,0.045) 25px 26px);
-  color: #2b2620;
-  border: 1px solid #b7a888;
-  border-top: 5px solid #a02334;
+  background: #221a13;
+  border: 1px solid #5a4632;
+  border-top: 5px solid #c9a24d;
   border-radius: 12px;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.6);
 }
-#overlay h2 { margin: 0 0 10px; color: #a02334; }
+#overlay h2 { margin: 0 0 10px; color: #e8c35a; }
 #overlay p { margin: 0 0 18px; line-height: 1.6; }
 #ov-buttons {
   display: flex;
@@ -378,34 +352,26 @@ button.on {
   padding: 10px 12px;
   text-align: left;
   font-size: 14px;
-  color: #2b2620;
-  background: #fffdf4;
-  border: 1px solid #ddd2b8;
-  border-left: 4px solid #a02334;
+  background: #2b2119;
+  border-left: 3px solid #c9a24d;
   border-radius: 6px;
 }
-#overlay .ad-note { font-size: 12px; color: #77705f; }
+#overlay .ad-note { font-size: 12px; color: #999; }
 #ov-buttons button {
   flex: 1;
   font-size: 16px;
   padding: 14px 0;
-  color: #2b2620;
-  background: #efe8d2;
-  border-color: #b7a888;
 }
-#ov-buttons button:active { background: #e3d7ba; }
 #ov-buttons button.primary {
-  background: #a02334;
-  border-color: #7c1a29;
-  color: #fff;
+  background: #5a1a28;
+  border-color: #8b1e32;
   font-weight: bold;
 }
-#ov-buttons button.primary:active { background: #7c1a29; }
 
 /* 選択肢が多いとき（遺品回収など）はスクロールできるようにする */
 #overlay .panel { max-height: calc(100% - 16px); overflow-y: auto; touch-action: pan-y; }
 /* ジョイスティックで選んでいるボタン */
-#ov-buttons button.sel { outline: 3px solid #a02334; outline-offset: 1px; }
+#ov-buttons button.sel { outline: 3px solid #ffd84a; outline-offset: 1px; }
 
 /* ---- 村 ---- */
 #village {
@@ -427,8 +393,8 @@ button.on {
   align-items: baseline;
   font-size: 18px;
   font-weight: bold;
-  color: #f6f0dd;
-  border-bottom: 3px solid #a02334;
+  color: #efe6cf;
+  border-bottom: 3px solid #c9a24d;
   padding-bottom: 6px;
 }
 #v-tony { font-size: 16px; color: #f2c94c; }
@@ -458,7 +424,7 @@ button.on {
   font-size: 12px;
 }
 #v-facilities .v-icon { font-size: 22px; }
-#v-msg { min-height: 1.4em; font-size: 13px; color: #f2c94c; }
+#v-msg { min-height: 1.4em; font-size: 13px; color: #ffd84a; }
 #v-panel {
   flex: 1;
   min-height: 0;
@@ -473,7 +439,7 @@ button.on {
   font-size: 14px;
   background: #241c15;
   border: 1px solid #4a3d2f;
-  border-left: 4px solid #a02334;
+  border-left: 4px solid #c9a24d;
   border-radius: 6px;
 }
 .v-note { font-size: 14px; line-height: 1.7; color: #ccc; }
@@ -514,12 +480,12 @@ button.on {
   border: 1px solid #4a3d2f;
   border-radius: 10px;
 }
-.v-card-name { font-size: 16px; font-weight: bold; color: #f6f0dd; margin-bottom: 2px; }
+.v-card-name { font-size: 16px; font-weight: bold; color: #e8c35a; margin-bottom: 2px; }
 .v-card .v-note { font-size: 13px; line-height: 1.6; }
 .v-card .small { font-size: 12px; color: #aaa; }
 .v-card-btns { display: flex; gap: 6px; margin-top: 8px; }
 .v-card-btns button { flex: 1; padding: 12px 0; font-size: 15px; }
-.v-card-btns button.primary { background: #a02334; border-color: #7c1a29; color: #fff; font-weight: bold; }
+.v-card-btns button.primary { background: #5a1a28; border-color: #8b1e32; font-weight: bold; }
 
 /* ---- タイトル画面 ---- */
 #title {
